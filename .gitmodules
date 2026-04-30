@@ -1,0 +1,12 @@
+[submodule "submodule/ssh-dir"]
+	path = submodule/ssh-dir
+	url = git@github.com:ickc/ssh-dir.git
+[submodule "submodule/sman-snippets"]
+	path = submodule/sman-snippets
+	url = git@github.com:ickc/sman-snippets.git
+[submodule "submodule/dotfiles"]
+	path = submodule/dotfiles
+	url = git@github.com:ickc/dotfiles.git
+[submodule "submodule/envoy"]
+	path = submodule/envoy
+	url = git@github.com:ickc/envoy.git
