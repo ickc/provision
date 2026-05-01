@@ -128,83 +128,87 @@ without proportional complexity growth.
 
 ---
 
-## Approach C: Chezmoi
+## Approach C: Chezmoi for Dotfiles
 
-**Idea:** Replace the dotfiles symlink approach with
-[chezmoi](https://www.chezmoi.io/), a single static binary that manages
-dotfiles with templates, scripts, and built-in state tracking.
+**Idea:** Use [chezmoi](https://www.chezmoi.io/) to manage the **dotfiles
+layer only** — the files that land in `$HOME` and `$XDG_CONFIG_HOME`. Envoy
+remains an independent project handling software installation (mamba, VS Code
+CLI, sman, zim). The bootstrap orchestrator (this repo, or envoy's
+`bootstrap.sh`) calls both: envoy for tooling, chezmoi for configuration.
 
-Chezmoi bootstraps itself without sudo (`sh -c "$(curl -fsLS get.chezmoi.io)"`)
-and installs to `$HOME/bin`. It manages files by maintaining a "source state"
-(a directory of templates and scripts) and applying it to the home directory.
+Chezmoi is a single static binary, no sudo
+(`sh -c "$(curl -fsLS get.chezmoi.io)"`). It manages files via a "source
+state" — a directory of templates and scripts — and applies them to the
+home directory idempotently.
 
 ```
-chezmoi-source/
-  dot_zshenv.tmpl          # templated — adapts to OS/arch/host
+dotfiles repo (restructured as chezmoi source):
+  dot_zshenv.tmpl              # templated for OS/arch/host
   dot_zshrc.tmpl
-  dot_config/               # replaces XDG_CONFIG_HOME symlinking
-    git/config
+  dot_config/                  # individual config files, not a wholesale symlink
+    git/config.tmpl
     starship.toml
+    helix/config.toml
     ...
-  run_onchange_install-mamba.sh.tmpl    # runs when hash changes
-  run_onchange_install-system-env.sh.tmpl
-  run_once_install-code.sh.tmpl         # runs once, tracked in state
-  private_dot_ssh/                      # mode 0600 enforcement
+  private_dot_ssh/             # mode 0600 enforcement; or age-encrypted
+
+bootstrap sequence:
+  1. envoy: install mamba, system env, VS Code CLI, zim (unchanged)
+  2. chezmoi init + chezmoi apply (replaces `make all` in dotfiles)
+  3. envoy: gh auth, sman, ssh-dir (unchanged, or ssh-dir absorbed by chezmoi)
 ```
 
-`chezmoi apply` is inherently idempotent — it tracks what it has applied
-and skips unchanged files. `run_onchange_` scripts re-execute only when
-their content (or a hash marker in a comment) changes. `run_once_` scripts
-execute exactly once per machine.
+Envoy doesn't know about chezmoi. Chezmoi doesn't know about envoy. The
+bootstrap orchestrator calls them in sequence.
 
-**Boundary enforcement:** Chezmoi's source state structure. Templates
-naturally separate "what varies per machine" from "what is constant."
-Personal vs. reusable is handled by chezmoi's external source feature or
-by having the reusable scripts live in envoy and be called from `run_`
-scripts.
+**Boundary enforcement:** Chezmoi owns file placement and templating.
+Envoy owns software installation. The boundary is "files on disk" vs.
+"binaries and environments." They interact only through the filesystem
+(e.g., chezmoi writes `.zshenv` which references paths that envoy populated).
 
 ### Strengths
-- **No sudo, single static binary.** Same bootstrapping profile as pixi.
-- **Idempotency is built in** — file-level state tracking, `run_once_`,
-  `run_onchange_` semantics.
-- **Template system replaces compile system** for machine-specific
-  adaptation. Go `text/template` with `.chezmoidata` for variables (OS,
-  arch, hostname, cluster).
-- **Secret management** via age encryption — could handle SSH keys
-  directly, potentially replacing the `ssh-dir` repo.
-- **Dotfile management is the primary use case** — the tool is designed
-  exactly for this problem.
+- **No sudo, single static binary.** Same bootstrapping ease as pixi.
+- **Idempotency for dotfiles is built in.** `chezmoi apply` tracks file
+  state and skips unchanged files — directly solves ISSUES.md #7 for the
+  dotfiles component.
+- **Template system solves the shell config split naturally.** Instead of
+  splitting `.zshenv` into two files across repos (Phase 1 of ISSUES.md),
+  chezmoi templates generate machine-appropriate `.zshenv` from a single
+  source. HPC cluster paths, `__APPDIR` overrides, personal aliases — all
+  controlled by `.chezmoidata.yaml` variables per machine class.
+- **Secret management** via age encryption could absorb `ssh-dir` — SSH
+  keys stored encrypted in the dotfiles repo, decrypted on apply. Eliminates
+  a private repo.
+- **Envoy is untouched.** The install scripts, compile system, and
+  standalone extraction all survive exactly as they are. Chezmoi doesn't
+  compete with envoy — it replaces only `make all` in dotfiles.
 - **Active ecosystem** with good documentation.
 
 ### Weaknesses
-- **Dotfile-centric, not orchestration-centric.** The heavy install steps
-  (mamba, conda envs, zim) are awkward as `run_` scripts. Chezmoi manages
-  files well; managing multi-step software installation is a stretch of its
-  design.
-- **Opinionated about layout.** Migrating from the current dotfiles
-  symlink-everything approach to chezmoi's source state model requires
-  restructuring the entire dotfiles repo. The `config/` directory that is
-  currently symlinked wholesale must be broken into individual files in
-  chezmoi's source tree.
-- **Go template syntax** is another thing to learn and maintain. It's less
-  readable than the current shell-native approach for complex conditionals
-  (HPC cluster detection, path overrides).
-- **Loses standalone extraction.** Chezmoi's `run_` scripts are not
-  standalone — they depend on chezmoi's execution context (template
-  rendering, working directory, state tracking). You can't extract
-  `code.sh` and hand it to someone who doesn't have chezmoi.
-- **Shell config layering is only partially addressed.** Templates can
-  generate different `.zshenv` content per machine, but the
-  generic-vs-personal split within the shell logic is still a content
-  problem that templates don't solve.
-- **Overlap with existing compile system.** The compile system already
-  solves composable script assembly. Chezmoi's templates solve a similar
-  problem differently. Migrating means rewriting, not wrapping.
+- **Opinionated about layout.** The current dotfiles repo symlinks
+  `config/` wholesale as `$XDG_CONFIG_HOME`. Chezmoi manages individual
+  files. Migration requires breaking the `config/` directory into
+  individual entries in chezmoi's source tree. This is a significant
+  one-time restructuring.
+- **Go template syntax** is another thing to learn. For simple
+  conditionals it's fine; for the complex host-detection logic currently in
+  `.zshenv` it's less readable than native shell.
+- **Two tools to understand.** Someone working on the bootstrap must know
+  both chezmoi (for dotfiles) and envoy's compile system (for installers).
+  The current system is all shell.
+- **Doesn't solve orchestration.** The question of how Stage 0 → Stage 1
+  → dotfiles → sman → ssh-dir is sequenced is orthogonal. Chezmoi is a
+  component, not a coordinator.
+- **The `.zshenv` content split is deferred, not solved.** Templates can
+  generate different output per machine, but the generic-vs-personal
+  separation within the shell logic is still a content-level decision.
+  Chezmoi makes it easier to vary the output but doesn't tell you where
+  to draw the line.
 
 ### Best for
-Someone whose primary pain is dotfile management (templating for multiple
-machines, secret handling) and who is willing to treat the installer
-scripts as secondary `run_` hooks.
+Someone whose primary pain point is dotfile management across diverse
+machines (HPC clusters, personal laptop, throwaway VMs) and who wants to
+keep envoy's installer infrastructure unchanged.
 
 ---
 
@@ -335,10 +339,13 @@ variables, not shared global state.
 - Multi-platform (macOS + Linux) with platform-specific task files.
 
 ### Weaknesses
-- **Ansible must be installed first.** It needs Python, which on a truly
-  bare system may not exist. This is a heavier Stage 0 than pixi (which is
-  a static binary). Installing Ansible via mamba creates the same
-  chicken-and-egg as today, just with a different egg.
+- **Ansible needs Python.** Ansible itself is a Python package — no sudo
+  needed (`pip install --user ansible`, or via mamba/pixi). But a bare
+  system may not have Python at all, so a Stage 0 script must provide it
+  first (via mamba or pixi). The dependency chain is: shell → mamba/pixi →
+  Python → Ansible → playbook. This is heavier than pixi (single static
+  binary) but not fundamentally different from the current mamba → task
+  chain.
 - **Heavy for the problem size.** Ansible shines at managing fleets of
   servers. For a single-user dotfile setup with <10 components, the YAML
   boilerplate and role directory structure is overhead.
@@ -360,101 +367,123 @@ experience.
 
 ## Comparison Matrix
 
-| Criterion | A: Layered Split | B: Plugin Arch | C: Chezmoi | D: Pixi | E: Ansible |
+Note: Approaches are **not mutually exclusive**. C (Chezmoi) operates on the
+dotfiles layer only and can combine with any orchestration approach (A, B, D,
+or E). The matrix evaluates each approach within its own scope.
+
+| Criterion | A: Layered Split | B: Plugin Arch | C: Chezmoi (dotfiles) | D: Pixi | E: Ansible |
 |-----------|:---:|:---:|:---:|:---:|:---:|
-| Disruption to current system | Low | Medium | High | Medium | High |
-| Stage 0 dependency | None (pure shell) | None (pure shell) | curl (static binary) | curl (static binary) | Python + pip |
+| **Scope** | All layers | Orchestration | Dotfiles only | Orchestration | All layers |
+| Disruption to current system | Low | Medium | Medium (dotfiles repo) | Medium | High |
+| Stage 0 dependency | None (pure shell) | None (pure shell) | curl (static binary) | curl (static binary) | Python (via mamba/pixi) |
 | Requires sudo | No | No | No | No | No |
-| Idempotency | Bolted on | First-class | Built in | First-class (in Python) | Built in |
-| Boundary enforcement | Convention | Structure (descriptors) | File layout + templates | Language (Python modules) | Role boundaries |
-| Shell config decoupling | Directly addressed | Orthogonal | Partial (templates) | Orthogonal | Orthogonal |
+| Idempotency | Bolted on | First-class | Built in (for dotfiles) | First-class (in Python) | Built in |
+| Boundary enforcement | Convention | Structure (descriptors) | Tool boundary (chezmoi=files, envoy=software) | Language (Python modules) | Role boundaries |
+| Shell config decoupling | Directly addressed | Orthogonal | Addressed (templates) | Orthogonal | Orthogonal |
 | Profile/public-mode support | Flag-based | Native (profile files) | Template conditionals | Native (pipeline scripts) | Variable-driven |
-| Standalone script extraction | Preserved (compile system) | Lost | Lost | Lost (mitigatable) | Lost |
+| Standalone script extraction | Preserved (compile system) | Lost | Preserved (envoy untouched) | Lost (mitigatable) | Lost |
 | HPC cluster compatibility | High | High | High | Medium (no ppc64le) | Medium |
 | Learning curve | Low | Low | Medium (Go templates) | Low (Python) | Medium |
-| Scales to more components | Poorly | Well | Moderately | Well | Well |
+| Scales to more components | Poorly | Well | N/A (dotfiles only) | Well | Well |
 | Third-party reusability | Medium | High | Medium | High | Medium |
 | Testability | Low (shell) | Low (shell) | Low | High (pytest) | Medium (Molecule) |
+| Combinable with other approaches | — | Yes (any dotfile approach) | Yes (any orchestration approach) | Yes (C for dotfiles) | Yes (C for dotfiles) |
 
 ---
 
 ## Analysis
 
-The approaches sit on a spectrum from "minimal change" to "full rewrite":
+The approaches operate at two different levels, and recognizing this
+matters more than ranking them linearly:
 
-**A (Layered Split)** is the conservative choice. It solves the shell config
-coupling directly — which is needed regardless — but leaves orchestration
-as a monolithic shell script with soft boundaries. The compile system
-survives, standalone scripts work, and no new dependencies are introduced.
+**Dotfiles layer** — how config files are managed, templated, and placed:
+- A addresses this by splitting `.zshenv`/`.zshrc` into layered files
+  across repos (convention-based).
+- C addresses this by using chezmoi templates to generate
+  machine-appropriate config from a single source (tool-enforced).
+
+**Orchestration layer** — how the bootstrap sequence is structured and
+how reusable/personal separation is enforced:
+- A uses the existing compile system + shell monolith.
+- B replaces the monolith with a shell plugin runner.
+- D replaces it with pixi + Python library/pipeline.
+- E replaces it with Ansible roles.
+
+**A (Layered Split)** is the conservative choice. It addresses both layers
+but with soft boundaries. The compile system and standalone scripts survive.
 The risk is re-coupling over time.
 
-**B (Plugin Architecture)** adds structural boundaries to orchestration while
-staying in shell. It's a good idea in theory, but for ~8 components the
-plugin runner may be more complex than the problem warrants. And it doesn't
-help with the shell config split or standalone extraction.
+**B (Plugin Architecture)** adds structural boundaries to orchestration
+while staying in shell. For ~8 components, the plugin runner may be more
+complex than the problem warrants. Loses standalone extraction unless the
+compile system is kept alongside.
 
-**C (Chezmoi)** solves dotfile management well but is a poor fit for
-orchestrating software installation. The `run_` script model pushes complex
-install logic into an awkward execution context. It would also require a
-near-complete rewrite of the dotfiles repo. Most importantly, it kills
-standalone extraction — the compile system's ability to produce `code.sh`
-as a dependency-free script has no equivalent in chezmoi.
+**C (Chezmoi for dotfiles)** solves dotfile management — templating,
+idempotency, per-machine variation — without touching envoy's installer
+infrastructure. The compile system and standalone scripts are unaffected.
+The cost is restructuring the dotfiles repo (breaking the wholesale
+`config/` symlink into individual files) and learning Go templates. It
+combines naturally with D or B for orchestration.
 
-**D (Pixi)** is the most architecturally clean. Python's module system
-provides real boundary enforcement, testability, and the
-library-plus-pipeline separation maps directly to "reusable infrastructure
-vs. personal choices." The cost is losing `bash code.sh install` as a
-zero-dependency operation and dropping ppc64le platform support.
+**D (Pixi)** is the cleanest orchestration approach. Python's module
+system provides real boundary enforcement and testability. The cost is
+losing zero-dependency standalone scripts (mitigated by keeping envoy's
+compile system) and no ppc64le support.
 
 **E (Ansible)** is over-specified for the problem. The role abstraction is
-well-designed but the YAML indirection is heavy for what amounts to "run
-these shell commands in order." Shell integration is painful.
+sound but the YAML indirection is heavy for what amounts to "run these
+shell commands in order."
 
 ---
 
 ## Recommendation
 
-No single approach covers everything. The best path combines elements:
+The approaches are best evaluated as choices at two levels:
 
-### Primary: Approach A's shell config split + Approach D's pixi orchestration
+### Dotfiles layer: A (shell split) vs. C (chezmoi)
 
-1. **Start with A's Phase 1** — split `.zshenv`/`.zshrc` into bootstrap and
-   personal layers. This is a content-level fix that every approach needs.
+Both solve the shell config decoupling problem. The trade-off:
 
-2. **Adopt pixi as the Stage 0 foundation** instead of mamba+task. Pixi is
-   a lighter bootstrap (static binary vs. full conda install) and replaces
-   both the task runner and the Python provider in one step.
+- **A** keeps everything in shell. Lower learning curve, no new tool. But
+  the boundary between "bootstrap layer" and "personal layer" is a
+  file-level convention that can drift.
+- **C** uses chezmoi templates. The per-machine variation problem (HPC
+  paths, cluster detection, personal aliases) is solved by a purpose-built
+  tool rather than hand-rolled sourcing logic. Idempotency for dotfiles is
+  free. The cost is restructuring the dotfiles repo and learning Go
+  templates.
 
-3. **Write the orchestration as a Python package** against pixi's Python.
-   Installers are library functions; personal bootstrap is a pipeline
-   script. Third parties import the library and write their own pipeline.
+Either works. C is more upfront effort but a more durable boundary.
 
-4. **Keep the compile system in envoy for standalone scripts.** The shell
-   lib/bin/state model continues to produce `code.sh`, `mamba.sh`, etc.
-   for cases where someone needs a single tool without pixi. These are the
-   "escape hatch" — the Python orchestrator is the primary path, the
-   compiled scripts are the minimal-dependency fallback.
+### Orchestration layer: keep compile system vs. D (pixi + Python)
 
-This means two implementations of each installer exist: one in
-`envoy/install/src/lib/` (shell, for standalone use) and one in the Python
-library (for orchestrated bootstrap). The shell versions already exist and
-rarely change. The Python versions add value through composition, testing,
-and clean separation — not by reimplementing the install logic, but by
-calling the shell functions or reimplementing the simple ones (most are
-just a curl + extract + move).
+- **Keeping the compile system** means no new orchestration dependency.
+  Standalone scripts continue to work. The `bootstrap.sh` monolith stays,
+  but with better-separated content (from whichever dotfiles approach is
+  chosen). Profiles and public mode are added as flags.
+- **D (pixi)** replaces the monolith with a Python package. Clean
+  library/pipeline separation, testable, scales well. Standalone scripts
+  are preserved by keeping envoy's compile system as a parallel fallback
+  path for single-component installs and unsupported platforms (ppc64le,
+  FreeBSD).
 
-### Addressing the "pixi feels heavy for one thing" concern
+### Concrete combinations
 
-The standalone shell scripts remain the answer for single-component
-installs. `bash code.sh install` still works. Pixi is only needed when you
-want the *orchestrated* bootstrap — profiles, dependency ordering, the full
-pipeline. This is a reasonable trade: someone installing just the VS Code
-CLI on a random server doesn't need profiles or dependency graphs; someone
-bootstrapping a full environment can afford to install pixi first.
+**Minimal change (A only):** Split the shell configs, add `--public` flag,
+harden idempotency. No new tools. Lowest risk, but soft boundaries.
 
-### Platform gap
+**A + D:** Shell config split for the dotfiles content, pixi + Python for
+orchestration. Envoy's compile system stays for standalone scripts.
 
-For ppc64le (and FreeBSD), the compiled shell scripts are the only path.
-The Python orchestrator can detect this at Stage 0 and fall back to the
-shell bootstrap. This keeps the current platform coverage without
-contorting the pixi-based system to support platforms pixi doesn't run on.
+**C + D:** Chezmoi for dotfiles, pixi + Python for orchestration. The
+most structurally clean option but the most migration work. Both the
+dotfiles repo and the bootstrap orchestration are rewritten.
+
+**C + keep compile system:** Chezmoi for dotfiles, envoy's existing
+`bootstrap.sh` for orchestration (with `--public` flag added). Moderate
+change — dotfiles repo is restructured, but the installer side is
+untouched.
+
+The right combination depends on which pain point is sharper: the dotfile
+management problem (→ prioritize C) or the orchestration/reusability
+problem (→ prioritize D).
