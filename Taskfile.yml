@@ -1,0 +1,12 @@
+version: '3'
+
+tasks:
+  init:
+    desc: Initialize submodules after a fresh clone
+    cmds:
+      - git submodule update --init --recursive
+
+  update:
+    desc: Pull latest commits in all submodules
+    cmds:
+      - git submodule update --remote --merge
