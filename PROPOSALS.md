@@ -284,10 +284,14 @@ third party writes their own pipelines against the same library.
   The current `bash code.sh install` requires nothing beyond bash+curl.
   This can be mitigated by keeping the compiled shell scripts in envoy as a
   parallel path, but then there are two implementations to maintain.
-- **pixi platform coverage.** pixi supports Linux x86_64, Linux aarch64,
-  macOS x86_64, macOS arm64. It does **not** support ppc64le or FreeBSD.
-  The current system supports ppc64le (via mamba) and partially supports
-  FreeBSD. Stage 0 would need a fallback for these platforms.
+- **pixi binary availability.** The pixi binary has official releases for
+  Linux x86_64, Linux aarch64, macOS x86_64, and macOS arm64. It does not
+  ship a binary for ppc64le or FreeBSD. However, pixi *as a package
+  manager* supports ppc64le as a target platform (conda packages can be
+  resolved and installed for it). The gap is only at Stage 0: you can't
+  `curl | bash` to get pixi on a ppc64le machine. Stage 0 would need a
+  fallback (e.g., build pixi from source via cargo, or use the shell
+  bootstrap directly).
 - **Python adds a layer of abstraction** over what is fundamentally "run
   shell commands." The installer functions will be `subprocess.run(["curl",
   ...])` wrappers. Some will argue this is unnecessary indirection.
@@ -382,7 +386,7 @@ or E). The matrix evaluates each approach within its own scope.
 | Shell config decoupling | Directly addressed | Orthogonal | Addressed (templates) | Orthogonal | Orthogonal |
 | Profile/public-mode support | Flag-based | Native (profile files) | Template conditionals | Native (pipeline scripts) | Variable-driven |
 | Standalone script extraction | Preserved (compile system) | Lost | Preserved (envoy untouched) | Lost (mitigatable) | Lost |
-| HPC cluster compatibility | High | High | High | Medium (no ppc64le) | Medium |
+| HPC cluster compatibility | High | High | High | Medium (no ppc64le binary) | Medium |
 | Learning curve | Low | Low | Medium (Go templates) | Low (Python) | Medium |
 | Scales to more components | Poorly | Well | N/A (dotfiles only) | Well | Well |
 | Third-party reusability | Medium | High | Medium | High | Medium |
@@ -428,7 +432,7 @@ combines naturally with D or B for orchestration.
 **D (Pixi)** is the cleanest orchestration approach. Python's module
 system provides real boundary enforcement and testability. The cost is
 losing zero-dependency standalone scripts (mitigated by keeping envoy's
-compile system) and no ppc64le support.
+compile system) and no pixi binary for ppc64le.
 
 **E (Ansible)** is over-specified for the problem. The role abstraction is
 sound but the YAML indirection is heavy for what amounts to "run these
@@ -464,8 +468,8 @@ Either works. C is more upfront effort but a more durable boundary.
 - **D (pixi)** replaces the monolith with a Python package. Clean
   library/pipeline separation, testable, scales well. Standalone scripts
   are preserved by keeping envoy's compile system as a parallel fallback
-  path for single-component installs and unsupported platforms (ppc64le,
-  FreeBSD).
+  path for single-component installs and platforms where pixi has no
+  binary (ppc64le, FreeBSD).
 
 ### Concrete combinations
 
