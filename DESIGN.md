@@ -39,6 +39,26 @@ The pivot at step 8 separates the HTTPS-only phase from the git-over-ssh phase. 
 
 **Why dotfiles are sourced multiple times:** `bootstrap.sh` sets fallback defaults for `__OPT_ROOT`, `MAMBA_ROOT_PREFIX`, etc. *after* sourcing `.zshenv`/`.zshrc`. The dotfiles have ultimate authority — their computed values (based on `__HOST` detection, HPC cluster paths, etc.) override the script's simple defaults. Re-sourcing at steps 2 and 7 propagates any new path additions made by earlier install steps.
 
+## Compile System (envoy)
+
+The `install/` directory in envoy uses a source-level composition model. Scripts are not written as monoliths — they are assembled from three layers:
+
+| Layer | Path | Role |
+|-------|------|------|
+| **state** | `src/state/env.sh` | Shared environment defaults (`__OPT_ROOT`, `MAMBA_ROOT_PREFIX`, etc.) |
+| **lib** | `src/lib/*.sh` | Installer functions (one per tool: `code_install`, `mamba_install`, …) |
+| **bin** | `src/bin/*.sh` | Entry points — source state + libs, wire up a CLI (`install`/`uninstall`) |
+
+`src/compile.sh` is a naive preprocessor: it reads a bin script, and wherever it sees `source ../lib/foo.sh` it inlines the file contents. The output is a self-contained shell script with no external dependencies.
+
+**Example:** `src/bin/code.sh` sources `state/env.sh` and `lib/code.sh`, producing a standalone `install/code.sh` that can install the VS Code CLI on any supported platform with just `bash code.sh install`. No mamba, no conda, no task runner — just curl/wget and tar.
+
+`src/bin/bootstrap.sh` sources *all* libs and orchestrates the full sequence. But any subset can be extracted as a standalone script by writing a new bin entry point that sources only what it needs.
+
+The makefile drives compilation: `make all` compiles every `src/bin/*.sh` into a top-level `install/*.sh`. Lib changes trigger recompilation of all scripts that depend on them.
+
+This design means the install functions are written once (in lib) and reused across both the full bootstrap and single-purpose scripts, without runtime dependencies on a task runner or package manager.
+
 ## Key Environment Variables
 
 All ultimately set by `dotfiles/home/.zshenv`:
