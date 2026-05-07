@@ -10,3 +10,12 @@ tasks:
     desc: Pull latest commits in all submodules
     cmds:
       - git submodule update --remote --merge
+
+  symlink:
+    desc: Symlink dotfiles, sman-snippets, and navi-cheatsheets to their expected locations
+    cmds:
+      - cd submodule/dotfiles && make all
+      - mkdir -p ~/git/source
+      - ln -sfn {{.ROOT_DIR}}/submodule/sman-snippets ~/git/source/sman-snippets
+      - mkdir -p ~/.local/share/navi
+      - ln -sfn {{.ROOT_DIR}}/submodule/navi-cheatsheets ~/.local/share/navi/cheats
