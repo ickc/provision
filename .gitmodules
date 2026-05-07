@@ -10,3 +10,6 @@
 [submodule "submodule/envoy"]
 	path = submodule/envoy
 	url = git@github.com:ickc/envoy.git
+[submodule "submodule/navi-cheatsheets"]
+	path = submodule/navi-cheatsheets
+	url = git@github.com:ickc/navi-cheatsheets.git
