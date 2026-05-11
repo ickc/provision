@@ -87,6 +87,20 @@ Throughout all phases, commits follow this protocol:
    branch all affected repos to `dev`. This repo's `dev` points to `dev` in
    all submodules.
 
+## Implementation Discipline
+
+**Implement only what the current phase concretely requires. Do not front-load
+work that belongs to a later phase.**
+
+Later phases are described at a level of intent, not specification. What is
+actually built in phase N may differ from what the plan says about phase N —
+because earlier decisions change constraints. Each phase should be designed from
+the concrete state left by the previous phase, not from the plan's description
+of what a future phase might want.
+
+Corollary: if a change is only justified by "phase M will need it", defer it to
+phase M. Phase M's plan will be revised when it begins.
+
 ---
 
 ## Phase 0 — Housekeeping
