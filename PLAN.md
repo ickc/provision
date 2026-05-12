@@ -159,9 +159,8 @@ instead of using `__OPT_ROOT`). Align with the correct derivation from
 
 ## Phase 1 — Decouple Environment Setup
 
-**Goal:** Separate generic environment setup (owned by envoy) from personal/machine-specific
-configuration (owned by dotfiles), so that envoy is usable standalone and dotfiles doesn't
-depend on envoy being present.
+**Goal:** Separate installer path knowledge (owned by envoy) from personal shell configuration
+(owned by dotfiles), so that each is independently usable without assuming the other exists.
 
 **Why this must come first:** Both Phase 2 (pixi) and Phase 3 (chezmoi) depend on knowing
 where the boundary is. The content split determines what envoy's shell library provides
@@ -172,15 +171,23 @@ Branch all affected repos to `dev` before starting.
 
 ### The split
 
-**Moves to envoy** (`env.sh` — the generic shell env library):
-- OS/arch detection (`__OSTYPE`, `__ARCH`, `__NCPU`)
-- `__LOCAL_ROOT` / `__OPT_ROOT` derivation (respecting `__APPDIR` if pre-set)
-- XDG base directory setup (`XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME`)
-- `MAMBA_ROOT_PREFIX`, `PIXI_HOME` derivation
-- Homebrew prefix detection
+The guiding principle: env.sh answers "where does envoy put things?" — nothing more.
+dotfiles answers "what is the user's personal environment?" — which may build on top of
+those paths, but doesn't depend on them for its own functioning.
 
-**Stays in dotfiles** (personal/machine-specific):
+**envoy's env.sh** (installer path knowledge):
+- OS/arch detection (`__OSTYPE`, `__ARCH`) — needed for arch-specific install paths
+- `__LOCAL_ROOT` / `__OPT_ROOT` derivation (respecting `__APPDIR` if pre-set)
+- `MAMBA_ROOT_PREFIX`, `PIXI_HOME` derivation
+- XDG base directory defaults (`XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`,
+  `XDG_CACHE_HOME`) — envoy uses `XDG_DATA_HOME` as its own install root
+
+**Stays in dotfiles** (personal shell configuration):
 - `__HOST` / cluster detection, `__APPDIR` assignment, `SCRATCH` paths
+- `__NCPU` detection (used for `MAKEFLAGS`; envoy has no use for it)
+- Homebrew prefix detection (PATH setup for interactive shell; not an install concern)
+- XDG base dirs set directly with simple defaults (dotfiles needs them independently
+  of envoy, e.g. for `SMAN_SNIPPET_DIR`)
 - Personal exports: `EDITOR`, `LANG`, `SMAN_SNIPPET_DIR`, `CARGO_PREFIX`, `GOPATH`, etc.
 - Tool-specific XDG overrides (`CONDA_BLD_PATH`, `IPYTHONDIR`, etc.)
 - The `ml_*` / `mu_*` module system (stays in dotfiles — mechanism is generic but tool
@@ -195,7 +202,6 @@ It is designed to be sourced by other shell configs and respects pre-existing en
 # env.sh pseudocode:
 # 1. Platform detection (always runs)
 __OSTYPE, __ARCH ← uname
-__NCPU ← platform-specific detection
 
 # 2. Path derivation (respects pre-existing values)
 __LOCAL_ROOT="${__LOCAL_ROOT:-${__APPDIR:+${__APPDIR}/local}}"
@@ -206,24 +212,27 @@ __OPT_ROOT="${__OPT_ROOT:-${__LOCAL_ROOT}/opt/${__OSTYPE}-${__ARCH}}"
 MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-${__OPT_ROOT}/miniforge3}"
 PIXI_HOME="${PIXI_HOME:-${__OPT_ROOT}/pixi}"
 
-# 4. XDG setup (respect pre-existing values)
+# 4. XDG base dirs (respect pre-existing values)
 XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-${HOME}/.config}"
 XDG_DATA_HOME="${XDG_DATA_HOME:-${__LOCAL_ROOT}/share}"
-# ... etc
+XDG_STATE_HOME="${XDG_STATE_HOME:-${__LOCAL_ROOT}/state}"
+XDG_CACHE_HOME="${XDG_CACHE_HOME:-${HOME}/.cache}"
 ```
 
-The key pattern: every variable is set with `${VAR:-default}`. If dotfiles (or anything
-else) has already set `__APPDIR`, `__LOCAL_ROOT`, etc. before envoy is sourced, those
-values are preserved. If not, envoy uses sensible defaults.
+The key pattern: every variable is set with `${VAR:-default}`. If dotfiles has already
+set `__APPDIR`, `XDG_CONFIG_HOME`, etc. before env.sh is sourced, those values are
+preserved. If not, env.sh uses sensible defaults.
 
 This means:
 - **Path 3 (envoy only):** env.sh runs with no pre-existing vars, uses all defaults.
   A user gets a working environment at `~/.local/...`.
-- **Paths 1-2 (dotfiles + envoy):** dotfiles' `.zshenv` sets `__APPDIR`, `__HOST`,
-  `SCRATCH`, etc. first, then sources env.sh. envoy sees `__APPDIR` and derives
-  paths accordingly (e.g., `/cosma/apps/durham/$USER/opt/...` on an HPC cluster).
-- **Path 4 (dotfiles only):** dotfiles provides its own inline platform detection
-  and path derivation as a fallback when envoy is absent.
+- **Paths 1-2 (dotfiles + envoy):** dotfiles' `.zshenv` sets `__APPDIR`, XDG base
+  dirs, etc. first, then sources env.sh. env.sh sees `__APPDIR` and derives
+  `__OPT_ROOT` accordingly (e.g., `/cosma/apps/durham/$USER/opt/...` on an HPC cluster).
+- **Path 4 (dotfiles only):** dotfiles sets XDG base dirs directly and optionally
+  references `__OPT_ROOT`/`MAMBA_ROOT_PREFIX` for personal exports — but those vars
+  will simply be unset, which is correct: if envoy isn't installed, the tools it
+  manages aren't installed either. No fallback logic needed.
 
 ### Why not `.envrc` / direnv
 
@@ -246,32 +255,36 @@ bootstrap script downloads `env.sh` instead of full dotfiles during Stage 0.
 
 ### Sourcing order in dotfiles' .zshenv
 
-When both dotfiles and envoy are present:
 ```bash
-# 1. Personal/machine-specific setup (runs unconditionally)
-#    Sets __APPDIR, __HOST, SCRATCH, etc. based on hostname detection.
-#    These are self-contained — no dependency on envoy.
+# 1. Personal/machine-specific setup (runs unconditionally, no envoy dependency)
+#    Sets __HOST, __APPDIR, SCRATCH, __NCPU, Homebrew prefix.
+#    Sets XDG base dirs directly (dotfiles needs these regardless of envoy).
 
-# 2. Source envoy's env.sh if available
-#    envoy detects platform, derives paths (using __APPDIR if set),
-#    sets XDG vars, MAMBA_ROOT_PREFIX, PIXI_HOME, etc.
-_envoy_env="${XDG_DATA_HOME:-${__LOCAL_ROOT:-${HOME}/.local}/share}/envoy/env.sh"
-[[ -f "$_envoy_env" ]] && . "$_envoy_env"
+# 2. Source envoy's env.sh if available — no fallback needed
+#    env.sh derives __LOCAL_ROOT, __OPT_ROOT, MAMBA_ROOT_PREFIX, PIXI_HOME
+#    (using __APPDIR if already set). If env.sh is absent, those vars are
+#    simply unset — correct, because the tools envoy manages aren't installed.
+[[ -f "${XDG_DATA_HOME}/envoy/env.sh" ]] && . "${XDG_DATA_HOME}/envoy/env.sh"
 
-# 3. Personal exports that depend on the derived paths
-#    EDITOR, SMAN_SNIPPET_DIR, CARGO_PREFIX, etc.
+# 3. Personal exports (EDITOR, LANG, SMAN_SNIPPET_DIR, CARGO_PREFIX, etc.)
+#    May reference __OPT_ROOT or XDG vars set above. If __OPT_ROOT is unset
+#    (envoy absent), exports that reference it are simply empty — harmless.
 ```
 
-When dotfiles is alone (path 4), step 2 is skipped and dotfiles falls back to
-inline defaults for `__OPT_ROOT`, etc. This fallback is a minimal duplication
-of envoy's logic — just the path derivation, not the full library.
+The "no fallback" design is intentional: the variables env.sh provides only have
+meaning when envoy is installed. dotfiles need not replicate envoy's path logic.
 
 ### What this phase produces
 
 - envoy is usable standalone: source `env.sh`, get correct platform detection and paths.
-- dotfiles sources envoy if present, degrades gracefully if absent.
-- The boundary is enforced by a clear invariant: envoy never references dotfiles,
-  only checks environment variables that may or may not already be set.
+- dotfiles is usable standalone: personal shell config works with XDG base dirs it
+  sets itself; vars like `MAMBA_ROOT_PREFIX` are simply absent when envoy isn't installed.
+- When both are present, dotfiles sets `__APPDIR` and XDG dirs first, then sources
+  env.sh which derives `__OPT_ROOT` and tool paths respecting those pre-set values.
+- The boundary is enforced by two clear invariants:
+  1. envoy never references dotfiles, only checks pre-existing env vars.
+  2. dotfiles never replicates envoy's path derivation logic — it either gets those
+     vars from env.sh (envoy present) or doesn't use them (envoy absent).
 
 ---
 
