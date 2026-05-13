@@ -288,33 +288,71 @@ meaning when envoy is installed. dotfiles need not replicate envoy's path logic.
 
 ---
 
-## Phase 2 — Pixi-based Envoy
+## Phase 2 — Python-based Installers with Compile System
 
-**Goal:** Replace envoy's compile.sh / makefile system with pixi tasks. Each installer
-becomes independently runnable via `pixi run <task>`.
+**Goal:** Replace envoy's bash compile.sh / makefile system with Python-based installers.
+Each installer is a modular Python submodule compiled into a self-contained, stdlib-only
+script for `curl | python3` distribution. pixi tasks provide the development and
+orchestration interface.
 
-**Depends on:** Phase 1 (pixi tasks reference the decoupled env vars from `env.sh`).
+**Depends on:** Phase 1 (installers reference the decoupled env vars from `env.sh`).
 
-### Add pixi.toml to envoy
+### Installer module in bsos
 
-envoy gets a `pixi.toml` that declares:
-- A default environment with Python (for orchestration logic beyond shell)
-- Tasks for each installer: `install-mamba`, `install-code`, `install-sman-bin`,
-  `install-zim`, `install-system-env`, etc.
+A new stdlib-only module inside bsos (e.g. `bsos.installers`) contains the installer
+logic. The module is structured as submodules mirroring the current bash installers:
+
+```
+src/bsos/installers/
+  __init__.py
+  _common.py          # shared: platform detection, download helpers, path derivation
+  code.py             # VS Code CLI installer
+  pixi.py             # pixi installer
+  mamba.py            # miniforge/mamba installer
+  mamba_env.py        # conda environment creation
+  sman.py             # sman binary installer
+  zim.py              # zsh plugin manager installer
+  bootstrap.py        # full bootstrap sequence (orchestrates the others)
+```
+
+**Hard constraint:** this module uses only Python stdlib. No exceptions. The rest of
+bsos (conda web_api, nix helpers, brew helpers) may use whatever dependencies they need —
+this constraint applies only to `bsos.installers`.
+
+### Compile system
+
+A compile step (a Python script or pixi task) produces self-contained single-file
+scripts from the modular source. Each compiled script includes only the submodules
+it needs (e.g. `dist/code.py` includes `_common.py` + `code.py`; `dist/bootstrap.py`
+includes everything).
+
+Compiled output goes to `install/dist/` (tracked in git), so each script is
+directly usable via:
+```bash
+curl -fsSL https://raw.githubusercontent.com/ickc/envoy/main/install/dist/code.py | python3
+curl -fsSL https://raw.githubusercontent.com/ickc/envoy/main/install/dist/bootstrap.py | python3
+```
+
+This mirrors the current pattern where `install/src/` contains modular source and
+`install/*.sh` contains compiled output, but in Python instead of bash.
+
+### Pixi tasks
+
+envoy's `pixi.toml` declares tasks that invoke the installer modules directly
+(not the compiled scripts):
+
+- `install-mamba`, `install-code`, `install-sman-bin`, `install-zim`, etc.
 - Corresponding `uninstall-*` and `check-*` (is-installed?) tasks
 - A `bootstrap` meta-task that runs them in dependency order
+- A `compile` task that regenerates `install/dist/*.py` from the source modules
 
-### Port installers
-
-Each `install/src/lib/*.sh` becomes a pixi task. The task can be:
-- A shell command (for simple installers like zim, code)
-- A Python script (for complex orchestration, env resolution, dependency checks)
-
-The compile.sh preprocessor and the `install/src/bin/*.sh` → `install/*.sh` pipeline
-are removed entirely. Standalone installation of a single tool is now:
+When envoy is cloned and pixi is available, the ergonomic interface is:
 ```bash
 pixi run --manifest-path /path/to/envoy/pixi.toml install-code
 ```
+
+The compiled `dist/` scripts exist for the bootstrap case (fresh system, no pixi yet)
+and for standalone `curl | python3` use.
 
 ### Conda env management
 
@@ -340,9 +378,9 @@ chezmoi-managed `$XDG_CONFIG_HOME`). The `.zshrc` fpath is updated to include
 
 ### What is removed
 
-- `install/src/compile.sh` — the preprocessor
-- `install/src/bin/*.sh` — the entry points that get compiled
-- `install/*.sh` — the compiled output artifacts
+- `install/src/compile.sh` — the bash preprocessor (replaced by Python compile system)
+- `install/src/bin/*.sh` — the bash entry points
+- `install/*.sh` — the compiled bash output (replaced by `install/dist/*.py`)
 - `envoy/dotfiles/` — replaced by `env.sh` (from Phase 1)
 - `envoy/makefile` — replaced by pixi tasks (format/check tasks move to pixi too)
 
