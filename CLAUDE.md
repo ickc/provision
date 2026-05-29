@@ -37,6 +37,11 @@ cd submodule/dotfiles && make all
 cd submodule/ssh-dir && make permission
 ```
 
+## Coding Conventions (envoy installers)
+
+- **Never call GitHub API endpoints** (`api.github.com`) to resolve "latest" release versions. The API is rate-limited at 60 req/hour for unauthenticated clients and will return 403 on shared CI runners. Use the `/releases/latest/download/<filename>` redirect URL instead — GitHub resolves it to the current release with no API call.
+- **Fail hard on missing prerequisites.** If an installer cannot run because a dependency is absent, print a clear error and exit 1. Exit 0 (skip) is reserved for unsupported *platforms* only. A missing dependency on a supported platform is a real error.
+
 ## Bootstrap Flow
 
 The entry point is `submodule/envoy/install/bootstrap.sh`. It runs on a fresh UNIX system and:
