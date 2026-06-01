@@ -298,41 +298,66 @@ meaning when envoy is installed. dotfiles need not replicate envoy's path logic.
 **Goal:** Replace envoy's bash compile.sh / makefile system with Python-based installers.
 Each installer is a modular Python submodule, stdlib-only, compiled into a self-contained
 single-file script for `curl | python3` distribution. pixi tasks provide the development
-and orchestration interface. The replacement is **incremental**: each installer is ported
-and its bash counterpart retired one at a time, so the Python and bash systems coexist
-until the port is complete.
+and orchestration interface.
 
 **Depends on:** Phase 1 (installers reference the decoupled env vars; `env.sh` is now
 *generated* from the same Python module — see below).
 
-**Status:** A proof-of-concept has landed (draft PR into envoy `main`): the package
-scaffold, the compile system, the `env.sh` generator, the `code` (VS Code CLI) installer,
-its tests, and CI. The structure below is what that POC established; the remaining
-installers follow the same pattern.
+**Status: Complete.** PR #1 merged into envoy `main`. All installers are ported; the bash
+compile system is superseded; CI covers smoke, unit, freshness, lint, and dead-code checks.
+The remaining bash artefacts (`install/src/compile.sh`, `install/makefile`,
+`install/src/lib/*.sh`, `install/src/bin/bootstrap.sh`, `install/src/bin/dotfiles.sh`,
+`install/bootstrap.sh`, `install/dotfiles.sh`) are kept until Phase 4's bootstrap
+orchestrator replaces them.
 
 ### Installer module: `bsos.installers`
 
-A stdlib-only package inside bsos. The POC split the planned single `_common.py` into
-focused private helpers and added the compile system:
+A stdlib-only package inside bsos:
 
 ```
 src/bsos/installers/
-  __init__.py       # package docstring; the install/uninstall/test convention
+  __init__.py       # package docstring; install/uninstall/update/reinstall/test convention
+  __main__.py       # entry point: python -m bsos.installers <action> [names…]
   _env.py           # EnvConfig (path derivation) + env.sh generator — single source of truth
-  _download.py      # stdlib download + tar/zip extraction helpers
+  _download.py      # stdlib download + tar/zip extraction helpers (with retry)
   _subprocess.py    # find_command / require_command / run (explicit child env)
   _compile.py       # the compile system (see below)
-  code.py           # VS Code CLI installer (the POC installer)
+  _recipe.py        # declarative Recipe engine — most installers reduce to one RECIPE line
+  clifton.py        # Clifton HPC workflow tool installer
+  code.py           # VS Code CLI installer
+  codex.py          # OpenAI Codex CLI installer
+  gh.py             # GitHub CLI installer
+  mamba.py          # Miniforge3 (mamba) installer
+  mamba_env.py      # conda environment installer (uses local env files or URL)
+  pixi.py           # pixi installer
+  sman.py           # sman snippet manager installer
+  zim.py            # zim zsh plugin manager installer
 ```
 
-Still to port, one module each, same pattern: `pixi`, `mamba`, `mamba_env`, `sman`,
-`zim`, and a `bootstrap` orchestrator.
+A companion `bsos.shell` subpackage holds:
+```
+src/bsos/shell/
+  completion.py     # generate-completions: writes to XDG_DATA_HOME dirs
+```
 
-**Hard constraint:** this package uses only Python stdlib. No exceptions. The rest of
-bsos (conda web_api, nix helpers, brew helpers) may use whatever dependencies they need.
-The one value the modules share from the package, `bsos.__version__`, is *baked into a
-literal at compile time* (see the compile system), so the compiled artifact carries no
-`bsos` dependency either.
+**Hard constraint:** `bsos.installers` uses only Python stdlib. No exceptions. `bsos.__version__`
+is baked to a literal at compile time, so compiled artefacts carry no `bsos` dependency.
+
+### Declarative Recipe engine
+
+`_recipe.py` introduces a `Recipe` dataclass and `github_binary` / `run_cli` helpers.
+Most tool installers reduce to a single declaration:
+
+```python
+RECIPE = github_binary(name="gh", repo="cli/cli", asset="gh_{version}_linux_amd64.tar.gz",
+                       targets={…}, member="bin/gh")
+if __name__ == "__main__":
+    run_cli(RECIPE)
+```
+
+The engine implements the five shared stages (locate → unpack/place → cleanup → test →
+uninstall) exactly once, and the tree-shaker inlines only the stages each recipe actually
+reaches into its compiled output.
 
 ### Env as a single source of truth
 
@@ -343,120 +368,108 @@ literal at compile time* (see the compile system), so the compiled artifact carr
   the controlled environment (`subprocess_env()`) handed to installer subprocesses.
 - `generate_env_sh()` — emits the shell `env.sh` from the same definitions.
 
-So Phase 1's hand-maintained `env.sh` becomes a *generated artifact*: `_env.py` is the
-source of truth, `env.sh` is regenerated from it (`pixi run generate-env-sh`) and pinned by
-a test. Non-Python shells keep sourcing `env.sh`, and the installers' path logic can no
+Phase 1's hand-maintained `env.sh` is now a *generated artefact*: `_env.py` is the source
+of truth, `env.sh` is regenerated from it (`pixi run generate-env-sh`) and pinned by a
+test. Non-Python shells keep sourcing `env.sh`, and the installers' path logic can no
 longer drift from it.
 
 ### Entry-point convention
 
-Every installer module exposes three actions: `install`, `uninstall`, and `test`.
-`test` validates an install on the current platform and **skips cleanly (exit 0) on an
-unsupported platform**, so CI can run it on any runner. Each module runs as
-`python -m bsos.installers.<name> <action>` and, once compiled, as
+Every installer module exposes five actions: `install`, `update`, `reinstall`, `uninstall`,
+and `test`.
+- `install` is idempotent — prints "already installed" and exits 0 if the tool is present.
+- `update` updates an existing install in-place.
+- `reinstall` is `uninstall` + fresh `install`.
+- `test` validates the install on the current platform and **skips cleanly (exit 0) on an
+  unsupported platform**, so CI can run it on any runner.
+
+Each module runs as `python -m bsos.installers.<name> <action>` and, once compiled, as
 `python3 install/<name>.py <action>` (or `curl … | python3 - <action>`).
+
+The package entry point (`python -m bsos.installers <action> [names…]`) auto-discovers all
+non-private installer modules and drives them in order, with optional filtering by name.
 
 ### Compile system
 
 `bsos.installers._compile` produces a self-contained script from a source module
-(`python -m bsos.installers._compile code -o install/code.py`, or `pixi run compile-code`).
+(`python -m bsos.installers._compile` or `pixi run compile`).
 It is AST-based and does more than concatenation:
 - resolves intra-package imports and topologically sorts dependencies;
 - **tree-shakes to definition granularity** — only the functions/classes/assignments
   actually reachable from what each importer uses are emitted (the target module itself is
   kept whole), so a small installer pulls in only the helpers it touches;
 - merges, de-duplicates, and canonicalizes stdlib imports; drops intra-package imports;
-  hoists `__future__`; carries the target's docstring; emits the `if __name__` block last;
+  hoists `__future__` (including `annotations` for PEP 563 safety); carries the target's
+  docstring; emits the `if __name__` block last;
 - **bakes `from bsos import <const>`** to a literal (e.g. `__version__ = '0.1.0'`) so the
   output needs no `bsos` package. Only simple constants may be baked.
 
 ### Compiled output and distribution
 
-Compiled scripts are written next to their bash predecessors — `install/code.py` beside
-`install/code.sh` (no separate `dist/` directory) — and tracked in git. Each is directly
-usable:
+Compiled scripts live in `install/` and are tracked in git. Each is directly usable:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ickc/envoy/main/install/code.py | python3 - install
 ```
-The bash `install/*.sh` remain for the not-yet-ported installers; each is removed as its
-Python port lands.
+The unported bash scripts (`bootstrap.sh`, `dotfiles.sh`) remain until Phase 4.
 
 ### Pixi tasks
 
-pixi config lives in `pyproject.toml` under `[tool.pixi.*]` (not a separate `pixi.toml`).
-Tasks the POC added:
+pixi config lives in `pyproject.toml` under `[tool.pixi.*]`. Key tasks:
 
-- `install-code`, `uninstall-code`, `test-code` — drive the `code` installer
-- `compile-code` — regenerate `install/code.py` from source
+- `compile` — recompile all installer modules (`python -m bsos.installers._compile`);
+  pass `-- <name>` to target one module
+- `install`, `uninstall`, `smoke` — drive all (or named) installers; auto-discover modules
 - `generate-env-sh` — regenerate `env.sh` from `_env.py`
+- `generate-completions` — write shell completions to `$XDG_DATA_HOME/zsh/functions/`
+  and `$XDG_DATA_HOME/bash-completion/completions/`
 - `test` — run the pytest suite
+- `format`, `lint` — run all formatters / linters (shell + Python)
+- `lint-compiled` — dead-code check on `install/*.py` via vulture
 
-Per-installer tasks (`install-/uninstall-/test-/compile-<name>`) are added as each module
-is ported; the `bootstrap` meta-task that runs them in dependency order ships with the
-`bootstrap` module. The plan's earlier `check-*` (is-installed?) idea is realized as
-`test-*` with validate-and-clean-skip semantics instead.
+All installer tasks auto-discover modules; adding a new module requires no task boilerplate.
 
 ### Tests
 
-`tests/installers/` holds two kinds of test, both new in this phase (the plan had
-originally deferred testing to Phase 5):
-- **Artifact-freshness guards** — `env.sh` is pinned to `generate_env_sh()`, and
-  `install/code.py` to `compile_module("code")`. A stale checked-in artifact fails CI,
-  making "regenerate after editing source" a mechanically enforced invariant rather than a
-  manual discipline.
-- **Logic tests** — env derivation (defaults, `__APPDIR` redirect, pre-existing values,
-  empty-as-unset, subprocess env) and compile correctness (topological order; output is
-  valid Python with no leaked `bsos`/relative imports; version baked).
+`tests/` holds several test files, all new in this phase (the plan originally deferred
+testing to Phase 5):
+- `test_env.py` — env derivation: defaults, `__APPDIR` redirect, pre-existing values,
+  empty-as-unset, subprocess env
+- `test_compile.py` — compile correctness: topological order; valid Python with no leaked
+  `bsos`/relative imports; version baked; annotations safe under PEP 563
+- `test_download.py` — download helpers
+- `test_idempotency.py` — idempotency: artifact-freshness guards for `env.sh` and all
+  `install/*.py` (stale checked-in artefacts fail CI)
+- `test_main.py` — package entry-point and action dispatch
 
 ### CI
 
-`.github/workflows/test-installers.yml` runs on push and PR, with two jobs:
-- **smoke** — for each `install/*.py`, run `install` then `test` on the GitHub-hosted
-  runners that map to a supported `$(uname -sm)`: `ubuntu-latest` (Linux-x86_64),
-  `ubuntu-24.04-arm` (Linux-aarch64), `macos-latest` (Darwin-arm64), `macos-26-intel`
-  (Darwin-x86_64). It uses stock `actions/setup-python` (no pixi) — proving the
-  `curl | python3` path needs only a system Python — and globs `install/*.py`, so new
-  installers are covered automatically.
-- **unit** — `pixi run test` (the pytest suite, including the freshness guards).
+`.github/workflows/test-installers.yml` runs on push and PR, with five jobs:
+- **smoke** — for each `install/*.py`, run `install`, idempotency check, `update`, and
+  `reinstall` + `test` on all four supported runners (`ubuntu-latest`, `ubuntu-24.04-arm`,
+  `macos-latest`, `macos-26-intel`). Uses stock `actions/setup-python` (no pixi) —
+  proving the `curl | python3` path needs only a system Python. Globs `install/*.py`
+  so new installers are covered automatically.
+- **unit** — `pixi run test` (pytest suite including freshness guards).
+- **generated** — `pixi run format && pixi run compile` then `git diff --exit-code`;
+  enforces that formatted/compiled artefacts are always committed in sync with source.
+- **lint** — `pixi run lint` (shellcheck + ruff + mypy + pyright).
+- **lint-compiled** — `pixi run lint-compiled` (vulture dead-code check on `install/*.py`).
 
-This installer-level CI lands in Phase 2, earlier than the plan originally placed it. It
-exercises installers in isolation via their real entry point on real OSes; Phase 5's
-full-bootstrap container CI (paths 1/2/3) is a separate, later concern.
+This installer-level CI exercises installers via their real entry points on real OSes.
+Phase 5's full-bootstrap container CI (paths 1/2/3) is a separate, later concern.
 
-### Conda env management (remaining)
+### What remains from the original removal list
 
-Untouched by the POC; still to do. All conda env files stay in envoy as examples
-(`system.csv`, `conda.csv`, `jupyterlab.csv`, and generated `*_<platform>.yml`).
-**Remove the hardcoded `ickc`/`envoy` paths** in the current `mamba-env.sh`
-(`get_conda_env_file()` hardcodes `github_download_file_to ickc envoy main …`):
-- When envoy is cloned locally (normal case after bootstrap): use the local file directly.
-- When downloading (bootstrap's HTTPS-only phase): parameterize owner/repo, or accept a
-  URL/path as a task argument.
+The following bash artefacts survive Phase 2 and will be removed in Phase 4 when the
+bootstrap orchestrator module lands:
+- `install/src/compile.sh` — the old bash preprocessor
+- `install/makefile`
+- `install/src/lib/*.sh` — the old bash installer libraries
+- `install/src/bin/bootstrap.sh`, `install/src/bin/dotfiles.sh`
+- `install/bootstrap.sh`, `install/dotfiles.sh` — the two unported bash installers
 
-The conda env pixi tasks should accept an env-file path as input, making them reusable for
-any env file — envoy's bundled examples or a user's custom files.
-
-### Completion generation (remaining)
-
-Untouched by the POC; still to do. `completion/generate.sh` becomes a pixi task writing to
-`$XDG_DATA_HOME/zsh/functions/` and `$XDG_DATA_HOME/bash-completion/completions/`
-(conforming to XDG spec, not inside chezmoi-managed `$XDG_CONFIG_HOME`). The `.zshrc` fpath
-is updated to include `$XDG_DATA_HOME/zsh/functions/`.
-
-### What is removed (end state, reached incrementally)
-
-The bash system is retired one installer at a time as its Python port lands; this list is
-the destination, not a single step:
-- `install/src/compile.sh` — the bash preprocessor (replaced by `_compile.py`)
-- `install/src/bin/*.sh` — the bash entry points
-- `install/*.sh` — the compiled bash output (replaced by `install/*.py`)
-- `install/makefile` and the top-level `makefile` — replaced by pixi tasks (format/check
-  move to pixi too)
-- `envoy/dotfiles/` — replaced by `env.sh` (from Phase 1)
-
-**Removed so far** (in the POC PR): `envoy/dotfiles/`. The bash bin scripts were repointed
-to source the consolidated root `env.sh`; everything else above remains until its port
-lands.
+Already removed (Phase 1 + Phase 2): `envoy/dotfiles/`, `install/src/bin/` (except the
+two above), all other `install/*.sh`.
 
 ---
 
