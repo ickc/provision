@@ -620,85 +620,198 @@ has no separate "minimum shell-rc additions" contract.
 
 ## Phase 4 — Orchestrator Integration
 
-**Goal:** This repo becomes the top-level bootstrap entry point. One-liner setup on
-fresh systems.
+**Goal:** This repo becomes the top-level bootstrap entry point: a one-liner that
+reproduces — and supersedes — the effect of envoy's old `install/bootstrap.sh` on a fresh
+system, by *composing* each repo's documented standalone step.
 
-**Depends on:** Phase 2 (envoy has pixi tasks) + Phase 3 (dotfiles has chezmoi source).
+**Depends on:** Phase 2 (envoy ships compiled `install/<tool>.py` installers + `env.sh`)
+and Phase 3 (dotfiles is a chezmoi source).
 
-### Top-level pixi.toml
+**Branch:** breaking/structural — continue on `dev` across affected repos; this repo's
+`dev` points at `dev` in each submodule (per Commit Discipline).
 
-This repo gets a `pixi.toml` that composes envoy's tasks and adds orchestration:
+### Organizing decision: orchestration lives here, not in envoy
+
+The defining rule of this phase, and the resolution of "where does the bootstrap
+orchestrator live?":
+
+**This repo is the only component that knows the other repos exist.** Orchestration =
+*composition* of per-repo standalone steps. No submodule is aware of any other.
+
+Consequently, envoy's surviving cross-repo scripts are **deleted, not ported**:
+- `install/bootstrap.sh` clones dotfiles, ssh-dir, and sman-snippets and runs dotfiles'
+  `make all` — exactly the cross-repo knowledge the **Individual Bootstrappability**
+  invariant forbids envoy from holding. Porting it into envoy would re-introduce the
+  coupling Phase 1 removed. Its *per-tool* duties already live in the Python installers;
+  only its *cross-repo sequencing* needs a new home — this repo.
+- `install/dotfiles.sh` (symlink-based dotfiles installer) is obsoleted by chezmoi (Phase 3).
+
+What each repo provides — single-purpose, no cross-repo awareness:
+
+| Repo | Provides | Standalone step the orchestrator composes |
+|------|----------|-------------------------------------------|
+| envoy | per-tool installers + `env.sh` + system conda env | `python3 $ENVOY/install/<tool>.py install` (stock python3; no pixi/bsos) |
+| dotfiles | chezmoi source state | `chezmoi init --apply ickc/dotfiles` |
+| ssh-dir (private) | `~/.ssh` contents | `git clone` → `~/.ssh` + `make permission` |
+| sman-snippets | snippet data | `git clone` → `$XDG_DATA_HOME/sman/snippets` |
+| navi-cheatsheets | cheatsheet data | `git clone` → `$XDG_DATA_HOME/navi/cheats` |
+
+The dependency arrow only ever points *toward* envoy's per-tool installers: a data repo's
+README may name its prerequisite tool ("you need the `sman` binary — get it from envoy's
+`sman.py` or your package manager"), but envoy never names the data repo. envoy's `sman.py`
+already (Phase 2) installs only the binary + `sman.rc` and has zero knowledge of
+sman-snippets — that is the shape to preserve for every tool.
+
+> **On the sman example (from the design discussion):** there are two separable helpers,
+> and only the first belongs in envoy:
+> 1. *tool installer* — `sman.py` places the `sman` binary + rc; the **sman-snippets README
+>    points to this** as a prerequisite. Keep it in envoy.
+> 2. *data placement* — cloning sman-snippets to its XDG path is a plain `git clone`,
+>    documented in the data repo's own README and run by the orchestrator. envoy does
+>    **not** do it. Same for navi-cheatsheets.
+
+### Invocation model: compose CLIs, never import another repo's code
+
+The orchestrator drives each component through its **documented command-line / file
+interface** — `install/<tool>.py`, `env.sh`, `chezmoi`, `git clone`, `gh` — and never by
+importing another repo's Python. This expresses Individual Bootstrappability at the code
+level: envoy is a black box reachable with a stock `python3` (the same `curl | python3`
+contract Phase 2's CI proves), so this repo depends on neither envoy's internals nor its
+pixi environment.
+
+- `mamba`, `mamba_env` (`install --name system`), `zim`, `code`, `sman`, and the new
+  `chezmoi` are all compiled installers run as `python3 $XDG_DATA_HOME/envoy/install/<tool>.py install`.
+- `generate-completions` is the one piece not in the compiled set (it lives in
+  `bsos.shell.completion`, which is stdlib-only apart from `bsos.installers._env`). The
+  orchestrator runs it from the envoy checkout (`PYTHONPATH=$ENVOY/src python3 -m
+  bsos.shell.completion generate`); Phase 4 may instead fold it into the compile set —
+  decide when implementing.
+
+### New per-tool installer: `chezmoi`
+
+chezmoi is currently neither in the system conda env nor an envoy installer. Add a small
+`github_binary` recipe `bsos.installers.chezmoi` (like `gh`'s — chezmoi ships GitHub
+release binaries). dotfiles' standalone README then points to it as *its* prerequisite
+tool, mirroring sman-snippets → `sman.py`, and the orchestrator composes it. This is the
+only new installer Phase 4 introduces.
+
+### Clone protocol follows use case, not visibility
+
+The clone protocol is decided by **how the user will use the repo, not whether it is public
+or private.** Path 1 is *personal* use — the user has write access and will edit and push —
+so every repo, public ones included, is cloned over **SSH**. Paths 2-3 are read-only
+consumption, so they use **HTTPS**. (ssh-dir is special only in being private and
+path-1-only, which makes it the one repo that is *never* HTTPS.)
+
+Path 1 **assumes SSH agent forwarding** (or any working SSH→GitHub at bootstrap time): the
+forwarded agent authenticates from the very first clone, so no key is generated *before*
+cloning and there is no clone-over-HTTPS-then-`git remote set-url` flip. The machine's *own*
+SSH key is a separate concern — generated and registered in Stage 3, decoupled from cloning
+(below) — so cloning and the machine identity no longer share an ordering dependency.
+
+> - Path 1's first SSH clone (Stage 0) runs before `ssh-dir` provides `known_hosts`, so the
+>   orchestrator sets `GIT_SSH_COMMAND` with `StrictHostKeyChecking=accept-new` for that
+>   window (the original bootstrap.sh used `=no`).
+> - *Deferred:* if forwarding is absent, detect it (`ssh -T git@github.com`) and fall back to
+>   an in-bootstrap keygen + `gh auth` *before* the SSH clones. Not built now.
+
+### Bootstrap stages
+
+The three paths nest cleanly *by content* — **path 3 ⊂ path 2 ⊂ path 1** (tools → + dotfiles
+& data → + machine SSH identity). Each stage runs only in the paths marked at its right; with
+cloning handled by the forwarded agent, every path-1-only step now sits at the end:
+
+```
+Stage 0 — pure POSIX shell (the one-liner, ~30 lines):           [all paths]
+  detect OS/arch → install pixi (curl)
+  → clone THIS repo  (path 1: ssh via forwarded agent; path 2/3: https)
+  → `pixi run bootstrap` (or `… -- --public`)
+
+Stage 1 — envoy + its tools  (this stage alone == path 3):       [all paths]
+  clone envoy (ssh | https) → $XDG_DATA_HOME/envoy ; source $ENVOY/env.sh
+  install/mamba.py     install
+  install/mamba_env.py install --name system   # supplies gh, git, task, zsh,
+                                               #   navi, direnv, starship, steady-state pixi
+  install/zim.py       install
+  install/code.py      install
+  install/chezmoi.py   install                 # tool only; apply is Stage 2
+  install/sman.py      install                 # sman binary + sman.rc
+
+Stage 2 — dotfiles + data  (path 1 = ssh, path 2 = https):       [paths 1-2]
+  chezmoi init --apply ickc/dotfiles           # public, no secrets; machine-class templating
+  git clone sman-snippets    → $XDG_DATA_HOME/sman/snippets
+  git clone navi-cheatsheets → $XDG_DATA_HOME/navi/cheats
+  (path 1) git clone ssh-dir → ~/.ssh ; `make permission`
+
+Stage 3 — machine SSH identity (interactive; decoupled from clones):  [path 1 only]
+  ssh-keygen into ~/.ssh                        # lands alongside ssh-dir's config/known_hosts
+  register pubkey with GitHub (`gh auth login --git-protocol ssh --web`, or `gh ssh-key add`)
+
+Final — generate-completions (after every tool is installed)     [all paths]
+```
+
+Ordering constraints, made explicit:
+- `mamba_env --name system` (Stage 1) supplies `gh`, `git`, `task`, `zsh`, `navi`; Stage 3's
+  registration needs `gh`, so Stage 1 precedes it.
+- Stage 3's `ssh-keygen` writes into `~/.ssh` *after* Stage 2 cloned ssh-dir there, so the key
+  lands beside ssh-dir's files — the reverse of the original's clone-into-empty-`~/.ssh` +
+  key-merge, and possible only because cloning no longer depends on the key.
+- completions run last, after every tool that contributes one is installed.
+
+### End-system clones vs. development submodules
+
+The orchestrated bootstrap clones each component to its **runtime XDG location** at latest
+`main` — exactly as the old bootstrap.sh did — and does **not** use the submodules. The
+submodules under `submodule/` remain a **developer** convenience: version-pinning and
+working across all repos from one checkout. This resolves the existing overlap between the
+bootstrap (fresh clones) and the current `Taskfile.yml` `symlink` task (symlinks the
+submodules in place): the former is for end systems, the latter for development.
+
+### The orchestrator: a small stdlib module + thin pixi tasks
+
+This repo gains a `pixi.toml` (replacing `Taskfile.yml`) with a minimal dependency set —
+just enough to drive the steps (`python`, `git`). Tasks:
 - `bootstrap` — full personal sequence (path 1)
-- `bootstrap-public` — no secrets, HTTPS-only (path 2)
-- `init` — submodule setup (development use)
-- `update` — submodule pull (development use)
+- `bootstrap-public` — path 2 (no Stage-3 identity step; Stage-2 repos over HTTPS; no ssh-dir)
+- `init`, `update` — submodule setup / pull (development; ports the current Taskfile tasks)
 
-Per the **Individual Bootstrappability** invariant, these tasks **compose** each repo's
-documented standalone step (clone-to-path / `python3 install/<tool>.py` / `chezmoi apply`)
-rather than reimplementing it, so the orchestrated path and the README codeblocks stay in
-sync.
-
-### Bootstrap sequence (path 1: full personal)
-
-```
-Stage 0 (pure shell, ~30 lines — the one-liner):
-  1. Detect OS/arch, compute PIXI_HOME
-  2. Install pixi via curl
-  3. Clone this repo via HTTPS
-  4. Hand off to pixi
-
-Stage 1 (pixi available):
-  5. pixi run install-envoy       # clone envoy to XDG_DATA_HOME/envoy
-  6. source envoy/env.sh          # now all paths are set
-  7. pixi run install-mamba
-  8. pixi run install-system-env  # provides task, git, zsh, etc.
-  9. pixi run install-zim
-  10. pixi run install-code
-
-Stage 2 (SSH pivot — interactive):
-  11. pixi run ssh-keygen
-  12. pixi run gh-auth
-
-Stage 3 (git+SSH available):
-  13. pixi run install-chezmoi
-  14. pixi run chezmoi-init       # chezmoi init + apply — public dotfiles only (no secrets)
-  15. pixi run clone-ssh-dir      # clone ickc/ssh-dir (private) into ~/.ssh, fix perms
-                                  #   (path 1 only; preserves the per-machine key from step 11)
-  16. pixi run install-sman-bin   # binary
-  17. pixi run clone-snippets     # sman-snippets, navi-cheatsheets
-  18. pixi run generate-completions
-```
-
-### Bootstrap sequence (path 2: public)
-
-Same as path 1 but omits Stage 2 (no SSH keygen, no gh auth) and the `clone-ssh-dir`
-step. dotfiles applies identically — it is always public and never carries secrets — so
-there is no separate "chezmoi public mode"; machine-class *templating* of public values
-still applies.
-
-### Bootstrap sequence (path 3: envoy only)
-
-Only Stages 0-1. No chezmoi, no dotfiles, no SSH.
+Path selection (1/2/3), ordering, and idempotency are real control flow, so the recommended
+shape is a small **stdlib-only Python orchestration package in this repo** — mirroring envoy's
+bsos philosophy but importing *nothing* from envoy (it shells out per the invocation model
+above) — called by those pixi tasks. This keeps the orchestrator testable for Phase 5's
+`test-bootstrap`. (Trivial sequences could stay as raw pixi `depends-on` chains; the module
+earns its place at the path-selection logic and the interactive Stage-3 identity step.) Every step is idempotent and re-runnable: each envoy installer already prints
+"already installed" and exits 0, `chezmoi apply` only writes changed files, and re-runs turn
+clones into pulls.
 
 ### The one-liner
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ickc/bootstrap/main/bootstrap.sh | bash
+# public mode (no SSH, no ssh-dir):
+curl -fsSL https://raw.githubusercontent.com/ickc/bootstrap/main/bootstrap.sh | bash -s -- --public
 ```
 
-`bootstrap.sh` is a ~30-line Stage 0 shell script (not compiled, not generated — the
-only shell script in the system). It installs pixi and hands off to `pixi run bootstrap`.
+`bootstrap.sh` is the ~30-line Stage-0 script — **the only shell script in the system**,
+neither compiled nor generated. It installs pixi and hands off to `pixi run bootstrap`.
 
-For public mode:
-```bash
-curl -fsSL ... | bash -s -- --public
-```
+### Cleanup (completes Phase 2's deferred removals)
+
+With orchestration moved here, delete envoy's surviving bash (the Phase 2 "what remains"
+list): `install/bootstrap.sh`, `install/dotfiles.sh`, `install/makefile`, and the whole
+`install/src/` tree (`compile.sh`, `lib/*.sh`, `bin/{bootstrap,dotfiles}.sh`). Update
+envoy's `install/README.md`, which still documents the old `source FILEPATH` compile system
+and the old one-liner. In this repo, migrate `Taskfile.yml` → `pixi.toml` and update
+`CLAUDE.md` (the `task init` / `task update` references and the per-submodule command table).
 
 ### Submodule changes
 
-- Keep `ssh-dir` as a submodule (standalone private repo; cloned to `~/.ssh` on path 1)
-- Keep `dotfiles`, `envoy`, `sman-snippets`, `navi-cheatsheets` as submodules
-  (for development and version-pinning; not required on bootstrapped end systems)
+- Keep all five submodules (`envoy`, `dotfiles`, `sman-snippets`, `navi-cheatsheets`,
+  `ssh-dir`) for development and version-pinning; none are required on bootstrapped end
+  systems.
+- `ssh-dir` stays private and is the only repo *never* cloned over HTTPS — it appears only
+  in path 1 and always uses SSH. In path 1 the public repos use SSH too (personal use); see
+  *Clone protocol follows use case, not visibility*.
 
 ---
 
