@@ -2,11 +2,12 @@
 
 ## Decision
 
-- **Dotfiles layer:** chezmoi — manages config files, templates for machine-specific output, encrypted secrets
+- **Dotfiles layer:** chezmoi — manages **public, non-secret** config files; templates machine-specific *public* output (HPC paths, per-machine git email, OS differences). chezmoi's encryption is intentionally **not** used; dotfiles never carries secrets.
 - **Orchestration layer:** pixi — task runner + Python runtime for envoy's installer toolkit
-- **ssh-dir:** folded into dotfiles via chezmoi's secret management (specific solution TBD)
+- **ssh-dir:** stays a standalone **private** repo, cloned to `~/.ssh` (not absorbed into dotfiles). Only sensitive-but-shareable files (`authorized_keys`, `known_hosts`, SSH `config`) are committed; private keys are **never** committed — generated per-machine, local-only. (Absorbing it via chezmoi-encrypted secrets is a possible *future* exploration, deferred.)
 - **sman-snippets, navi-cheatsheets:** remain standalone repos, each documenting its expected install location
 - **envoy:** refactored as a pixi-orchestrated, portable installer toolkit; compile.sh system fully replaced; ships a shell env library (`env.sh`) that is usable independently of any personal dotfiles
+- **Individually bootstrappable repos:** every repo can be set up on its own via a copy-paste codeblock in its README that only *places files* and never edits the user's shell rc; each README also documents the minimum shell-rc additions (env vars / PATH) needed to use it. See "Individual Bootstrappability" below.
 - **This repo:** top-level orchestrator; submodule pinning for development; ships the bootstrap one-liner
 
 ## Repo End State
@@ -14,22 +15,24 @@
 | Repo | Role | Visibility |
 |------|------|------------|
 | `envoy` | Portable installer toolkit (pixi tasks), shell env library, conda env examples | public |
-| `dotfiles` | chezmoi source state: shell configs, tool configs, SSH keys (encrypted) | public |
+| `dotfiles` | chezmoi source state: shell configs, tool configs (public, **no secrets**) | public |
 | `sman-snippets` | sman snippet data | public |
 | `navi-cheatsheets` | navi cheatsheet data | public |
 | `bootstrap` (this repo) | Orchestrator, submodule pinning, bootstrap one-liner | public |
-| ~~`ssh-dir`~~ | absorbed into dotfiles | removed |
+| `ssh-dir` | SSH `config`, `known_hosts`, `authorized_keys` (no private keys) | **private** |
 
 ## Supported Bootstrap Paths
 
-The system supports four configurations, from most to least personalized:
+The system supports four configurations, from most to least personalized. **dotfiles is
+always public and never carries secrets**, so the only "private" axis is whether the
+`ssh-dir` repo is cloned:
 
-| Path | dotfiles | envoy | Secrets | Use case |
-|------|----------|-------|---------|----------|
-| 1. Full personal | yes (personal) | yes | yes (SSH keys, etc.) | Personal machine setup |
-| 2. Public personal | yes (public, no secrets) | yes | no | Testing, shared accounts |
+| Path | dotfiles | envoy | ssh-dir (private) | Use case |
+|------|----------|-------|-------------------|----------|
+| 1. Full personal | yes | yes | yes (`~/.ssh`; keys still per-machine) | Personal machine setup |
+| 2. Public personal | yes | yes | no | Testing, shared accounts |
 | 3. Envoy only | no | yes | no | Third-party reuse, minimal setup |
-| 4. Dotfiles only | yes (public) | no | no | Config management without envoy |
+| 4. Dotfiles only | yes | no | no | Config management without envoy |
 
 The key architectural constraint: **envoy never depends on dotfiles.** envoy's `env.sh`
 checks for pre-existing environment variables (which dotfiles may have set) and falls
@@ -38,6 +41,43 @@ standalone (path 3), and dotfiles can be applied before or without envoy (path 4
 
 When both are present (paths 1-2), dotfiles is sourced first to set personal/machine-specific
 variables (like `__APPDIR`), then envoy's `env.sh` is sourced and respects those values.
+
+Even in path 1, `ssh-dir` only supplies sensitive-but-shareable files (`config`,
+`known_hosts`, `authorized_keys`); private keys are generated per-machine during bootstrap
+and never come from any repo.
+
+## Individual Bootstrappability
+
+**Invariant:** every repo in this system can be bootstrapped on its own — without the
+orchestrator, and without knowing the other repos exist. This generalizes the
+"envoy never depends on dotfiles" rule to all repos.
+
+Each repo's `README.md` provides:
+1. **A copy-paste install codeblock** that only *places files/binaries where they belong*
+   (clone to the documented path, drop a binary, etc.). It must **not** edit the user's
+   shell rc (`.bashrc`/`.zshrc`) or any dotfiles — placement only.
+2. **A "minimum shell-rc additions" section** documenting the env vars / `PATH` / sourcing
+   the user must add *by hand* to actually use what was placed, plus any tool
+   prerequisites. (Applying it automatically is out of scope; we only document it.)
+
+This is the same philosophy as envoy's `env.sh` (which both *is* envoy's machine-readable
+"minimum env" and respects pre-existing vars): the standalone path places things and
+documents the env contract without taking over the user's shell config.
+
+Per-repo status (these per-repo READMEs are the tracked deliverables):
+
+| Repo | Standalone install (placement only) | Documented shell-rc contract |
+|------|-------------------------------------|------------------------------|
+| `envoy` | `python3 install/<tool>.py install` (curl-to-python3 too) | source `env.sh` — already satisfied (Phase 2) |
+| `dotfiles` | `chezmoi init --apply <repo>` (path 4) | n/a — it *is* the shell config |
+| `ssh-dir` | clone into `~/.ssh` + `make permission` | none required (optionally note `IdentityFile`) |
+| `sman-snippets` | clone to `$XDG_DATA_HOME/sman/snippets` | needs `sman` binary; set `SMAN_SNIPPET_DIR`; source `sman.rc` |
+| `navi-cheatsheets` | clone to `$XDG_DATA_HOME/navi/cheats` | needs `navi` binary; navi config / widget keybind |
+
+The Phase 4 orchestrator **composes** these documented standalone steps rather than
+reimplementing them, so the README codeblocks and the orchestrated path stay in sync.
+envoy already satisfies this; the data-repo and `ssh-dir` READMEs are non-breaking and can
+be written immediately; the `dotfiles` README is finalized with the Phase 3 restructure.
 
 ## File Layout (bootstrapped system)
 
@@ -53,7 +93,7 @@ $__OPT_ROOT/miniforge3/            # mamba installation
 $__OPT_ROOT/system/                # conda system env
 $__OPT_ROOT/bin/                   # standalone binaries (sman, code, etc.)
 ~/.config/                         # real directory, individual files managed by chezmoi
-~/.ssh/                            # chezmoi-managed, private keys encrypted
+~/.ssh/                            # ssh-dir repo clone (private); private keys per-machine, never committed
 ```
 
 Where `$XDG_DATA_HOME` defaults to `~/.local/share` and `$__OPT_ROOT` defaults to
@@ -138,7 +178,9 @@ Requires updating:
 - Each snippet/data repo (`sman-snippets`, `navi-cheatsheets`) should document its
   expected install location in its README with a one-liner git clone command.
   Downstream consumers (dotfiles, this repo) conform to that location but may use
-  symlinks instead of direct clones.
+  symlinks instead of direct clones. This is one instance of the **Individual
+  Bootstrappability** invariant (see above); the same per-repo README treatment applies
+  to `ssh-dir`, `envoy`, and `dotfiles`.
 
 ### 0c. Move sman.rc to XDG_DATA_HOME
 
@@ -475,11 +517,18 @@ two above), all other `install/*.sh`.
 
 ## Phase 3 — Chezmoi-based Dotfiles
 
-**Goal:** Restructure dotfiles as a chezmoi source state. Absorb ssh-dir. Replace
-`make all` with `chezmoi apply`.
+**Goal:** Restructure dotfiles as a chezmoi source state (public, **no secrets**).
+Replace `make all` with `chezmoi apply`. `ssh-dir` is **not** absorbed — it stays a
+standalone private repo (see Phase 4).
 
 **Depends on:** Phase 1 (the content split defines what chezmoi templates generate
 vs. what envoy provides).
+
+**Scope note:** chezmoi is used here only for **public, non-secret** config plus
+machine-class *templating* of public values (HPC `__APPDIR`/`SCRATCH`, per-machine git
+email, macOS vs. Linux differences). chezmoi's encryption features are intentionally
+unused. Anything secret (SSH private keys, `gh`'s `oauth_token`, etc.) is kept out of the
+dotfiles repo entirely.
 
 ### Restructure dotfiles repo
 
@@ -505,15 +554,14 @@ dotfiles/
     exact_starship.toml        # static
     exact_navi/config.yaml     # static
     ...                        # ~27 config subdirs, individually listed
-  private_dot_ssh/
-    encrypted_private_id_ed25519  # encrypted (solution TBD)
-    id_ed25519.pub
-    config.tmpl                   # templated per cluster
-    known_hosts
-    authorized_keys
   .chezmoidata.yaml            # machine-class variables
   .chezmoiignore               # OS-specific ignores
 ```
+
+There is **no** `private_dot_ssh/` here — SSH is owned by the separate `ssh-dir` repo.
+Any config that would embed a secret (e.g. `gh`'s `hosts.yml` with an `oauth_token`) is
+`.chezmoiignore`d or templated to exclude the secret; the token is produced locally by
+`gh auth login` during bootstrap, never committed.
 
 ### Breaking the wholesale config/ symlink
 
@@ -523,23 +571,27 @@ Tools can create files in it without git noise. chezmoi tracks only what we mana
 
 ### Template variables via .chezmoidata.yaml
 
-Machine class is determined by hostname patterns. Templates use variables for:
+Machine class is determined by hostname patterns. Templates use variables for **public,
+machine-specific** values only:
 - HPC cluster paths (`__APPDIR`, `SCRATCH`)
-- Personal vs. public mode (controls whether secrets are decrypted)
+- Per-machine public config (e.g. git email per machine class)
 - OS-specific config (macOS vs. Linux differences)
 
-### Absorb ssh-dir
+There is no "decrypt secrets" mode — dotfiles never carries secrets, so every machine
+class applies the same (public) source state, differing only in templated public values.
 
-SSH keys are stored encrypted in the dotfiles repo. `chezmoi apply` decrypts them on
-the target machine. SSH config files use chezmoi templates for cluster-specific sections
-(replacing the separate `config_clifton`, `config_DiRAC` files). `known_hosts` and
-`authorized_keys` are static.
+### ssh-dir stays separate (not absorbed)
 
-**Secret management solution is TBD.** chezmoi supports multiple backends: age encryption,
-1Password, Bitwarden, gopass, etc. The choice depends on security requirements and
-available infrastructure. This decision is deferred to implementation time.
+SSH is **not** moved into chezmoi. The `ssh-dir` repo remains a standalone **private**
+repo cloned to `~/.ssh`, keeping its own `config` / `config_clifton` / `config_DiRAC`,
+`known_hosts`, and `authorized_keys`. Private keys are never committed there — they are
+generated per-machine during bootstrap and stay local-only. This gives two independent
+layers of protection: a private (access-controlled) repo for sensitive-but-shareable
+files, and never-committed local-only private keys.
 
-After absorption, the `ssh-dir` repo is archived and removed from this repo's submodules.
+> **Deferred / future:** absorbing `ssh-dir` into chezmoi via encrypted secrets (age,
+> 1Password, etc.) may be revisited once there's more comfort with chezmoi's secret
+> management. It is explicitly out of scope for now.
 
 ### Graceful degradation (path 4: dotfiles without envoy)
 
@@ -558,6 +610,12 @@ logic.
 chezmoi tracks file state and only writes changed files. Re-running `chezmoi apply`
 is safe by design — this directly solves ISSUES.md #7 for the dotfiles component.
 
+### README (standalone path)
+
+Per the **Individual Bootstrappability** invariant, dotfiles' README documents its
+standalone setup (`chezmoi init --apply <repo>`). dotfiles *is* the shell config, so it
+has no separate "minimum shell-rc additions" contract.
+
 ---
 
 ## Phase 4 — Orchestrator Integration
@@ -574,6 +632,11 @@ This repo gets a `pixi.toml` that composes envoy's tasks and adds orchestration:
 - `bootstrap-public` — no secrets, HTTPS-only (path 2)
 - `init` — submodule setup (development use)
 - `update` — submodule pull (development use)
+
+Per the **Individual Bootstrappability** invariant, these tasks **compose** each repo's
+documented standalone step (clone-to-path / `python3 install/<tool>.py` / `chezmoi apply`)
+rather than reimplementing it, so the orchestrated path and the README codeblocks stay in
+sync.
 
 ### Bootstrap sequence (path 1: full personal)
 
@@ -598,16 +661,20 @@ Stage 2 (SSH pivot — interactive):
 
 Stage 3 (git+SSH available):
   13. pixi run install-chezmoi
-  14. pixi run chezmoi-init       # chezmoi init + apply — dotfiles + SSH
-  15. pixi run install-sman-bin   # binary
-  16. pixi run clone-snippets     # sman-snippets, navi-cheatsheets
-  17. pixi run generate-completions
+  14. pixi run chezmoi-init       # chezmoi init + apply — public dotfiles only (no secrets)
+  15. pixi run clone-ssh-dir      # clone ickc/ssh-dir (private) into ~/.ssh, fix perms
+                                  #   (path 1 only; preserves the per-machine key from step 11)
+  16. pixi run install-sman-bin   # binary
+  17. pixi run clone-snippets     # sman-snippets, navi-cheatsheets
+  18. pixi run generate-completions
 ```
 
 ### Bootstrap sequence (path 2: public)
 
-Same as path 1 but omits Stage 2 (no SSH keygen, no gh auth) and step 14 uses
-chezmoi's public mode (no encrypted secrets, no cluster-specific templates).
+Same as path 1 but omits Stage 2 (no SSH keygen, no gh auth) and the `clone-ssh-dir`
+step. dotfiles applies identically — it is always public and never carries secrets — so
+there is no separate "chezmoi public mode"; machine-class *templating* of public values
+still applies.
 
 ### Bootstrap sequence (path 3: envoy only)
 
@@ -629,7 +696,7 @@ curl -fsSL ... | bash -s -- --public
 
 ### Submodule changes
 
-- Remove `ssh-dir` submodule (absorbed into dotfiles)
+- Keep `ssh-dir` as a submodule (standalone private repo; cloned to `~/.ssh` on path 1)
 - Keep `dotfiles`, `envoy`, `sman-snippets`, `navi-cheatsheets` as submodules
   (for development and version-pinning; not required on bootstrapped end systems)
 
@@ -677,8 +744,8 @@ The migration (`pixi run migrate`):
    - `~/git/source/sman-snippets` → `$XDG_DATA_HOME/sman/snippets`
 2. **Convert dotfiles:** remove `~/.config` symlink, run `chezmoi init` + `chezmoi apply`
    (chezmoi places individual files, `~/.config` becomes a real directory)
-3. **Merge ssh-dir:** encrypt SSH keys into dotfiles repo, verify, remove standalone
-   ssh-dir clone
+3. **Keep ssh-dir as-is:** `~/.ssh` is already an `ssh-dir` clone — just ensure it tracks
+   the renamed `main` branch and run `make permission`. (No merge into dotfiles.)
 4. **No re-bootstrap needed** for mamba/system-env/pixi — already installed at
    correct paths
 5. **Update sman.rc location** and verify .zshrc sources from new path
@@ -730,11 +797,13 @@ Currently, dotfile changes propagate instantly (symlink to git working tree). Wi
 chezmoi, changes require `chezmoi apply`. During development, `chezmoi apply --watch`
 can auto-apply. For production use it's an explicit step — a tradeoff for idempotency.
 
-### 3. Secret management for ssh-dir absorption
+### 3. ssh-dir stays standalone (absorption deferred)
 
-The specific encryption/secret backend for chezmoi is intentionally deferred.
-Options include: age (passphrase-derived), 1Password, Bitwarden, gopass, or vault.
-The choice depends on security requirements and will be evaluated when Phase 3 begins.
+`ssh-dir` is **not** absorbed into dotfiles. It remains a standalone private repo cloned
+to `~/.ssh`, with private keys generated per-machine (never committed). chezmoi carries no
+secrets and uses no encryption backend. Revisiting absorption via chezmoi-encrypted
+secrets (age, 1Password, Bitwarden, gopass, vault) is a possible future exploration,
+deferred until there's more comfort with chezmoi's secret management.
 
 ### 4. ml_* / mu_* module system
 
