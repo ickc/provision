@@ -1,9 +1,11 @@
 [submodule "submodule/ssh-dir"]
 	path = submodule/ssh-dir
 	url = git@github.com:ickc/ssh-dir.git
+	branch = main
 [submodule "submodule/sman-snippets"]
 	path = submodule/sman-snippets
 	url = git@github.com:ickc/sman-snippets.git
+	branch = main
 [submodule "submodule/dotfiles"]
 	path = submodule/dotfiles
 	url = git@github.com:ickc/dotfiles.git
@@ -15,3 +17,4 @@
 [submodule "submodule/navi-cheatsheets"]
 	path = submodule/navi-cheatsheets
 	url = git@github.com:ickc/navi-cheatsheets.git
+	branch = main
