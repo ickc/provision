@@ -1,0 +1,48 @@
+name: test-bootstrap
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # End-to-end public bootstrap on every supported platform, then assert the
+  # resulting environment. Public path only: fully non-interactive, no secrets,
+  # no private repos — so it runs on forks and PRs unchanged. Native runners
+  # (not Docker) give real macOS coverage and a throwaway $HOME; setup-python
+  # supplies a system Python >= 3.10 (the bootstrap installs pixi itself in
+  # Stage 0, so no pixi preinstall is needed). The runner matrix mirrors envoy's
+  # test-installers.yml so the two stay in lock-step.
+  public:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+          - macos-latest
+          - macos-26-intel
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      # No submodules: bootstrap.sh clones each component live from main (the
+      # submodules under submodule/ are a developer convenience, not used here).
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: bootstrap (public) — fresh install
+        run: bash bootstrap.sh --public
+
+      - name: smoke test
+        run: bash test/smoke.sh --public
+
+      # Re-run end-to-end: clones become pulls, installers print "already
+      # installed", chezmoi re-applies cleanly. The second smoke must still pass.
+      - name: idempotency — second run is a no-op and still passes
+        run: |
+          bash bootstrap.sh --public
+          bash test/smoke.sh --public
