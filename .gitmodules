@@ -7,11 +7,11 @@
 [submodule "submodule/dotfiles"]
 	path = submodule/dotfiles
 	url = git@github.com:ickc/dotfiles.git
-	branch = dev
+	branch = main
 [submodule "submodule/envoy"]
 	path = submodule/envoy
 	url = git@github.com:ickc/envoy.git
-	branch = dev
+	branch = main
 [submodule "submodule/navi-cheatsheets"]
 	path = submodule/navi-cheatsheets
 	url = git@github.com:ickc/navi-cheatsheets.git
