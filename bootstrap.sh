@@ -175,6 +175,8 @@ if [ "${PUBLIC}" = "0" ]; then
     if [ "${NO_IDENTITY}" = "1" ]; then
         echo "--no-identity: skipping 'gh auth login'. Register this key later with:"
         echo "  gh auth login --git-protocol ssh --web   # then: gh ssh-key add ${_ssh_key}.pub"
+    elif "${__OPT_ROOT}/system/bin/gh" auth status &>/dev/null; then
+        echo "gh: already authenticated; skipping 'gh auth login'."
     else
         "${__OPT_ROOT}/system/bin/gh" auth login --git-protocol ssh --web || true
     fi
