@@ -11,12 +11,25 @@
 #
 # Path 1 (default): SSH clones, ssh-dir → ~/.ssh, SSH key generated + registered.
 # Path 2 (--public): HTTPS clones, no ssh-dir, no SSH key generation.
+#
+# --no-identity: path-1 provisioning without the interactive bits — generates the
+# SSH key with an empty passphrase and skips `gh auth login`. CI=true implies it,
+# so the personal path runs unattended (see `pixi run test-bootstrap`).
 
 set -euo pipefail
 
-# ── parse --public ────────────────────────────────────────────────────────────
+# ── parse flags ───────────────────────────────────────────────────────────────
 PUBLIC=0
-for _a in "$@"; do [ "${_a}" = "--public" ] && PUBLIC=1; done
+NO_IDENTITY=0
+for _a in "$@"; do
+    case "${_a}" in
+        --public)      PUBLIC=1 ;;
+        --no-identity) NO_IDENTITY=1 ;;
+    esac
+done
+# CI runners export CI=true; treat that as an implicit --no-identity so the
+# personal path runs unattended (no passphrase prompt, no browser gh auth login).
+[ "${CI:-}" = "true" ] && NO_IDENTITY=1
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 title() { echo; echo "════════════════════════════════════════"; echo "  $*"; }
@@ -133,12 +146,21 @@ if [ "${PUBLIC}" = "0" ]; then
     _ssh_key="${HOME}/.ssh/id_ed25519"
     if [ -f "${_ssh_key}" ]; then
         echo "${_ssh_key} already exists; skipping keygen."
+    elif [ "${NO_IDENTITY}" = "1" ]; then
+        # Non-interactive (CI / throwaway machines): empty passphrase, no prompt.
+        ssh-keygen -t ed25519 -C "${USER}@$(hostname)" -N '' -f "${_ssh_key}"
     else
         ssh-keygen -t ed25519 -C "${USER}@$(hostname)" -f "${_ssh_key}"
     fi
 
-    # Register pubkey with GitHub (interactive browser flow).
-    "${__OPT_ROOT}/system/bin/gh" auth login --git-protocol ssh --web || true
+    # Register pubkey with GitHub (interactive browser flow). --no-identity skips
+    # this irreproducible, account-touching step so the personal path stays testable.
+    if [ "${NO_IDENTITY}" = "1" ]; then
+        echo "--no-identity: skipping 'gh auth login'. Register this key later with:"
+        echo "  gh auth login --git-protocol ssh --web   # then: gh ssh-key add ${_ssh_key}.pub"
+    else
+        "${__OPT_ROOT}/system/bin/gh" auth login --git-protocol ssh --web || true
+    fi
 fi
 
 # ── final: generate shell completions ─────────────────────────────────────────

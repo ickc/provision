@@ -11,6 +11,10 @@ python = ">=3.10,<4"
 bootstrap        = { cmd = "bash bootstrap.sh",          description = "Full personal bootstrap: SSH clones, ssh-dir, SSH key (path 1)" }
 bootstrap-public = { cmd = "bash bootstrap.sh --public", description = "Public bootstrap: HTTPS clones, no ssh-dir (path 2)" }
 
+# Validation: assert a completed bootstrap (run after the matching bootstrap task)
+test-bootstrap        = { cmd = "bash test/smoke.sh",          description = "Assert a completed personal bootstrap (path 1)" }
+test-bootstrap-public = { cmd = "bash test/smoke.sh --public", description = "Assert a completed public bootstrap (path 2)" }
+
 # Development: submodule management
 init   = { cmd = "git submodule update --init --recursive",  description = "Initialize submodules after a fresh clone" }
 update = { cmd = "git submodule update --remote --merge",    description = "Pull latest commits in all submodules" }

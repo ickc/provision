@@ -28,6 +28,10 @@ pixi run init
 # Pull latest commits in all submodules
 pixi run update
 
+# Validate a completed bootstrap (run after the matching bootstrap)
+pixi run test-bootstrap          # path 1 (personal)
+pixi run test-bootstrap-public   # path 2 (public)
+
 # Format/lint envoy installers
 cd submodule/envoy && pixi run format
 cd submodule/envoy && pixi run lint
@@ -65,7 +69,9 @@ Stages:
   `mamba_env.py --name system`, `zim.py`, `code.py`, `chezmoi.py`, `sman.py`
 - **Stage 2** (paths 1–2): `chezmoi init --apply ickc/dotfiles`; clone sman-snippets and
   navi-cheatsheets; (path 1 only) clone ssh-dir → `~/.ssh` + `make permission`
-- **Stage 3** (path 1 only, interactive): `ssh-keygen`; `gh auth login`
+- **Stage 3** (path 1 only, interactive): `ssh-keygen`; `gh auth login`.
+  `--no-identity` (implied by `CI=true`) generates the key with an empty passphrase
+  and skips `gh auth login`, so the personal path runs unattended for testing.
 - **Final** (all paths): `PYTHONPATH=$ENVOY_DIR/src python3 -m bsos.shell.completion generate`
 
 Path 1 (default) uses SSH throughout and assumes SSH agent forwarding is active.
@@ -81,7 +87,17 @@ curl -fsSL https://raw.githubusercontent.com/ickc/provision/main/bootstrap.sh | 
 # From a local clone (also works):
 bash bootstrap.sh [--public]
 pixi run bootstrap[-public]
+
+# Validate the result (Phase 5). --no-identity makes path 1 unattended:
+bash bootstrap.sh --no-identity && pixi run test-bootstrap
+pixi run test-bootstrap-public
 ```
+
+`test/smoke.sh` asserts the provisioned environment (tools functional, `~/.config`
+a real dir, data repos cloned, completions present, SSH key + perms on path 1). CI
+(`.github/workflows/test-bootstrap.yml`) runs the public path end-to-end — fresh
+install, smoke, then a second run to prove idempotency — on the same four runners
+as envoy.
 
 ## Key Paths (runtime)
 

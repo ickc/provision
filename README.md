@@ -91,3 +91,26 @@ pixi run update    # pull latest commits in all submodules
 
 Installer development lives in `submodule/envoy`; see its `CLAUDE.md` for
 conventions.
+
+## Testing
+
+`test/smoke.sh` asserts the environment a bootstrap is expected to produce —
+tools functional, `~/.config` a real directory, data repos cloned, completions
+present, and (path 1) the SSH key with `600` perms. Run it after a bootstrap:
+
+```bash
+pixi run test-bootstrap          # path 1 (personal)
+pixi run test-bootstrap-public   # path 2 (public)
+```
+
+The personal path's Stage 3 (`ssh-keygen`, `gh auth login`) is interactive. Pass
+`--no-identity` — implied automatically when `CI=true` — to generate the key with
+an empty passphrase and skip `gh auth login`, so the path runs unattended:
+
+```bash
+bash bootstrap.sh --no-identity && pixi run test-bootstrap
+```
+
+CI (`.github/workflows/test-bootstrap.yml`) runs the public path end-to-end on
+Linux x86_64/aarch64 and macOS arm64/x86_64: fresh install → smoke → a second run
+to prove idempotency.
