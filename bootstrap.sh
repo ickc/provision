@@ -49,8 +49,8 @@ curl -fsSL "https://raw.githubusercontent.com/ickc/envoy/main/env.sh" -o "${_tmp
 export PATH="${__OPT_ROOT}/bin:${__OPT_ROOT}/system/bin:${PIXI_HOME}/bin:${PATH}"
 ENVOY_DIR="${XDG_DATA_HOME}/envoy"
 
-# Install pixi via our own installer (respects PIXI_HOME = __OPT_ROOT/pixi).
-curl -fsSL "https://raw.githubusercontent.com/ickc/envoy/main/install/pixi.py" | python3 - install
+# Install pixi; PIXI_HOME is already set by env.sh; PIXI_NO_PATH_UPDATE skips rc-file edits.
+PIXI_NO_PATH_UPDATE=1 curl -fsSL https://pixi.sh/install.sh | sh
 
 # ── stage 1: envoy + tools ────────────────────────────────────────────────────
 title "Stage 1: envoy + tools"
