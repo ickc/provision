@@ -87,7 +87,7 @@ This directly addresses the use case of bootstrapping testing environments. The 
 
 - `envoy` retains: installer functions (mamba, VS Code CLI, sman, zim), `system` conda env as canonical example, `bsos`-based CSV→YML generation tooling.
 - `envoy-personal` (new, public): personal conda env CSVs + generated YMLs (py3xx, jupyterlab variants), personal `system.csv` overrides if any.
-- `bootstrap` (this repo) references `envoy-personal` as a submodule (or just documents how to wire it in).
+- `provision` (this repo) references `envoy-personal` as a submodule (or just documents how to wire it in).
 
 ### Phase 4 — Make this repo the orchestration layer
 
@@ -119,19 +119,18 @@ Per component:
 | `dotfiles` | public | Shell bootstrap layer + personal dotfiles |
 | `sman-snippets` | public | Shell snippets |
 | `ssh-dir` | private | SSH keys, known_hosts — the only secret-holding repo |
-| `bootstrap` (this repo) | public (likely) | Orchestration, submodule pinning; private submodule means others can't fully run it but can read it |
+| `provision` (this repo) | public (likely) | Orchestration, submodule pinning; private submodule means others can't fully run it but can read it |
 
 ## End State Bootstrap Flow
 
 ```
 # Anyone (public mode):
-curl -fsSL https://raw.githubusercontent.com/ickc/bootstrap/main/bootstrap.sh | bash --public
+curl -fsSL https://raw.githubusercontent.com/ickc/provision/main/bootstrap.sh | bash -s -- --public
 
 # Personal (private mode, after initial public bootstrap or on a machine with SSH):
-git clone git@github.com:ickc/bootstrap.git && cd bootstrap
-task init    # git submodule update --init --recursive
-task install # Stage 0 (shell): mamba + system env
-             # Stage 1+ (taskfile): dotfiles, sman, envoy completions, ssh-dir
+git clone git@github.com:ickc/provision.git && cd provision
+pixi run init      # git submodule update --init --recursive
+pixi run bootstrap # full personal bootstrap (SSH)
 ```
 
-Re-running `task install` on an existing machine follows the idempotency rules per component (refuse-if-exists or update depending on component type).
+Re-running `pixi run bootstrap` on an existing machine follows the idempotency rules per component (refuse-if-exists or update depending on component type).

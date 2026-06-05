@@ -1,0 +1,16 @@
+[workspace]
+name = "provision"
+channels = ["conda-forge"]
+platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64"]
+
+[dependencies]
+python = ">=3.10,<4"
+
+[tasks]
+# Bootstrap convenience wrappers (also callable as: bash bootstrap.sh [--public])
+bootstrap        = { cmd = "bash bootstrap.sh",          description = "Full personal bootstrap: SSH clones, ssh-dir, SSH key (path 1)" }
+bootstrap-public = { cmd = "bash bootstrap.sh --public", description = "Public bootstrap: HTTPS clones, no ssh-dir (path 2)" }
+
+# Development: submodule management
+init   = { cmd = "git submodule update --init --recursive",  description = "Initialize submodules after a fresh clone" }
+update = { cmd = "git submodule update --remote --merge",    description = "Pull latest commits in all submodules" }

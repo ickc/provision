@@ -4,56 +4,92 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Purpose
 
-This repo aggregates personal environment setup via git submodules. It solves a chicken-and-egg bootstrap problem: SSH keys must exist before private repos can be cloned, so `submodule/ssh-dir` is bootstrapped first via `gh` CLI, then the rest follows.
+This repo is the top-level bootstrap orchestrator for a personal UNIX environment. It composes
+per-repo standalone steps (envoy, dotfiles, data repos, ssh-dir) into a one-liner that
+bootstraps a fresh machine. Submodules under `submodule/` are for development and version-pinning;
+bootstrapped end-systems clone each component to its runtime XDG location.
 
 ## Submodules
 
 | Path | Repo | Purpose |
 |------|------|---------|
-| `submodule/ssh-dir` | `ickc/ssh-dir` (private) | SSH keys, known_hosts, authorized_keys |
-| `submodule/dotfiles` | `ickc/dotfiles` (public) | Shell dotfiles, XDG config symlinks |
-| `submodule/envoy` | `ickc/envoy` (public) | Binary/environment installers (mamba, sman, zim, VS Code CLI) |
+| `submodule/ssh-dir` | `ickc/ssh-dir` (private) | SSH config, known_hosts, authorized_keys |
+| `submodule/dotfiles` | `ickc/dotfiles` (public) | chezmoi source state (shell config, XDG config) |
+| `submodule/envoy` | `ickc/envoy` (public) | Python installers (mamba, sman, zim, VS Code CLI, chezmoi, …) |
 | `submodule/sman-snippets` | `ickc/sman-snippets` (public) | Shell snippet manager snippets |
+| `submodule/navi-cheatsheets` | `ickc/navi-cheatsheets` (public) | navi cheatsheet data |
 
 ## Common Commands
 
 ```bash
 # Initialize submodules after a fresh clone
-task init
+pixi run init
 
 # Pull latest commits in all submodules
-task update
+pixi run update
 
-# Format shell scripts (envoy)
-cd submodule/envoy && make format
+# Format/lint envoy installers
+cd submodule/envoy && pixi run format
+cd submodule/envoy && pixi run lint
 
-# Lint shell scripts (envoy)
-cd submodule/envoy && make check
+# Compile envoy installers after source changes
+cd submodule/envoy && pixi run compile
 
-# Install dotfiles
-cd submodule/dotfiles && make all
+# Apply dotfiles (Phase 3+)
+chezmoi apply
 
 # Fix SSH permissions
 cd submodule/ssh-dir && make permission
 ```
 
-## Bootstrap Flow
+## Coding Conventions (envoy installers)
 
-The entry point is `submodule/envoy/install/bootstrap.sh`. It runs on a fresh UNIX system and:
-1. Downloads minimal dotfiles (`.zshenv`, `.zshrc`) temporarily from GitHub over HTTPS
-2. Installs VS Code CLI, Miniforge3 (mamba), a conda system environment, and zim (zsh plugin manager)
-3. Generates an SSH key and authenticates with GitHub via `gh auth login`
-4. Clones `ickc/dotfiles` (git+ssh) and runs `make all` to symlink everything
-5. Installs `sman` (snippet manager) and clones `sman-snippets`
-6. Clones `ickc/envoy` and generates shell completions
-7. Clones `ickc/ssh-dir` into `~/.ssh` (replacing the temporary `~/.ssh`)
+- **Never call GitHub API endpoints** (`api.github.com`) to resolve "latest" release versions.
+  Use the `/releases/latest` redirect URL — `GitHubRedirect` in `_recipe.py` handles this.
+- **Fail hard on missing prerequisites.** Exit 1 for missing dependencies on supported platforms;
+  exit 0 (skip) is reserved for unsupported platforms only.
+- **Compile after every source edit.** Each installer source in `src/bsos/installers/` has a
+  compiled counterpart in `install/`. Run `pixi run compile` after any change; freshness is
+  enforced by CI.
 
-## Key Paths (runtime, not this repo)
+## Bootstrap Flow (Phase 4)
 
-All paths set by `dotfiles/home/.zshenv` (dotfiles have ultimate authority; bootstrap.sh defaults are overridden after sourcing):
+`bootstrap.sh` is the single entry point — a self-contained bash script (~80 lines).
+It does NOT require this repo to be cloned first; `curl | bash` works on a fresh machine.
 
-- `$__LOCAL_ROOT` (`$HOME/.local`) — arch-**independent** prefix (share, state, zim)
-- `$__OPT_ROOT` (`$HOME/.local/opt/$__OSTYPE-$__ARCH`) — arch-**dependent** prefix; binaries land in `$__OPT_ROOT/bin`, conda envs under `$__OPT_ROOT/`
+Stages:
+
+- **Stage 0**: downloads `env.sh` from envoy (temp) to derive `__OPT_ROOT`/`PIXI_HOME`/etc.;
+  installs pixi via the official `pixi.sh/install.sh` (`PIXI_NO_PATH_UPDATE=1`; respects `PIXI_HOME`).
+- **Stage 1** (all paths): clone envoy → `$XDG_DATA_HOME/envoy`; run `install/mamba.py`,
+  `mamba_env.py --name system`, `zim.py`, `code.py`, `chezmoi.py`, `sman.py`
+- **Stage 2** (paths 1–2): `chezmoi init --apply ickc/dotfiles`; clone sman-snippets and
+  navi-cheatsheets; (path 1 only) clone ssh-dir → `~/.ssh` + `make permission`
+- **Stage 3** (path 1 only, interactive): `ssh-keygen`; `gh auth login`
+- **Final** (all paths): `PYTHONPATH=$ENVOY_DIR/src python3 -m bsos.shell.completion generate`
+
+Path 1 (default) uses SSH throughout and assumes SSH agent forwarding is active.
+Path 2 (`--public`) uses HTTPS, skips ssh-dir and Stage 3.
+
+```bash
+# Full personal bootstrap:
+curl -fsSL https://raw.githubusercontent.com/ickc/provision/main/bootstrap.sh | bash
+
+# Public bootstrap (HTTPS, no ssh-dir):
+curl -fsSL https://raw.githubusercontent.com/ickc/provision/main/bootstrap.sh | bash -s -- --public
+
+# From a local clone (also works):
+bash bootstrap.sh [--public]
+pixi run bootstrap[-public]
+```
+
+## Key Paths (runtime)
+
+Set by `dotfiles` (chezmoi-applied) and `envoy/env.sh`:
+
+- `$__LOCAL_ROOT` (`$HOME/.local`) — arch-independent prefix
+- `$__OPT_ROOT` (`$HOME/.local/opt/$__OSTYPE-$__ARCH`) — arch-dependent prefix; binaries in `$__OPT_ROOT/bin`
 - `$MAMBA_ROOT_PREFIX` (`$__OPT_ROOT/miniforge3`) — Miniforge installation
-- `$XDG_CONFIG_HOME` (`$HOME/.config`) — symlinked wholesale to `dotfiles/config/`
-- `$HOME/.ssh` — replaced by `ssh-dir` repo clone at end of bootstrap
+- `$XDG_DATA_HOME` (`$HOME/.local/share`) — runtime installs: envoy, sman/snippets, navi/cheats
+- `$XDG_CONFIG_HOME` (`$HOME/.config`) — real directory managed by chezmoi (Phase 3+)
+- `$HOME/.ssh` — ssh-dir repo clone (path 1 only); private keys generated per-machine, never committed
