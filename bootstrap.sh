@@ -21,11 +21,18 @@ for _a in "$@"; do [ "${_a}" = "--public" ] && PUBLIC=1; done
 # ── helpers ───────────────────────────────────────────────────────────────────
 title() { echo; echo "════════════════════════════════════════"; echo "  $*"; }
 
-# Clone if absent; pull if the destination is already a git repo.
+# Clone if absent; pull if already a git repo; init+fetch if dir exists but isn't a repo.
 git_clone_or_pull() {
     local url="${1}" dest="${2}"
     if [ -d "${dest}/.git" ]; then
         git -C "${dest}" pull
+    elif [ -d "${dest}" ]; then
+        # Directory exists but is not a git repo (e.g. pre-existing ~/.ssh with authorized_keys).
+        # git init + reset overlays tracked files while leaving untracked files (private keys) intact.
+        git -C "${dest}" init
+        git -C "${dest}" remote add origin "${url}"
+        git -C "${dest}" fetch origin
+        git -C "${dest}" reset --hard origin/HEAD
     else
         mkdir -p "${dest%/*}"
         git clone "${url}" "${dest}"
@@ -51,7 +58,9 @@ export PATH="${__OPT_ROOT}/bin:${__OPT_ROOT}/system/bin:${PIXI_HOME}/bin:${PATH}
 ENVOY_DIR="${XDG_DATA_HOME}/envoy"
 
 # Install pixi; PIXI_HOME is already set by env.sh; PIXI_NO_PATH_UPDATE skips rc-file edits.
-PIXI_NO_PATH_UPDATE=1 curl -fsSL https://pixi.sh/install.sh | sh
+if [ ! -x "${PIXI_HOME}/bin/pixi" ]; then
+    PIXI_NO_PATH_UPDATE=1 curl -fsSL https://pixi.sh/install.sh | sh
+fi
 
 # ── verify python ────────────────────────────────────────────────────────────
 # Envoy installers require Python ≥ 3.10 (stdlib-only, but uses modern syntax).
@@ -65,7 +74,8 @@ if sys.version_info < (3, 10):
         ERROR: python3 {sys.version} is too old (need ≥ 3.10).
         Run via the pixi project to get the right Python:
           git clone git@github.com:ickc/provision.git /tmp/provision
-          cd /tmp/provision && pixi run bootstrap
+          cd /tmp/provision && pixi run bootstrap          # personal (SSH)
+          cd /tmp/provision && pixi run bootstrap-public   # public (HTTPS)
         """), file=sys.stderr)
     sys.exit(1)
 EOF
@@ -112,7 +122,7 @@ else
     git_clone_or_pull "git@github.com:ickc/navi-cheatsheets.git" "${XDG_DATA_HOME}/navi/cheats"
     git_clone_or_pull "git@github.com:ickc/ssh-dir.git"          "${HOME}/.ssh"
     if [ -f "${HOME}/.ssh/makefile" ]; then
-        make -C "${HOME}/.ssh" permission || true
+        make -C "${HOME}/.ssh" permission || echo "WARNING: 'make permission' failed; check ~/.ssh permissions manually." >&2
     fi
 fi
 

@@ -125,13 +125,12 @@ Per component:
 
 ```
 # Anyone (public mode):
-curl -fsSL https://raw.githubusercontent.com/ickc/provision/main/bootstrap.sh | bash --public
+curl -fsSL https://raw.githubusercontent.com/ickc/provision/main/bootstrap.sh | bash -s -- --public
 
 # Personal (private mode, after initial public bootstrap or on a machine with SSH):
 git clone git@github.com:ickc/provision.git && cd provision
-task init    # git submodule update --init --recursive
-task install # Stage 0 (shell): mamba + system env
-             # Stage 1+ (taskfile): dotfiles, sman, envoy completions, ssh-dir
+pixi run init      # git submodule update --init --recursive
+pixi run bootstrap # full personal bootstrap (SSH)
 ```
 
-Re-running `task install` on an existing machine follows the idempotency rules per component (refuse-if-exists or update depending on component type).
+Re-running `pixi run bootstrap` on an existing machine follows the idempotency rules per component (refuse-if-exists or update depending on component type).

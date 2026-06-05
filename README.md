@@ -9,7 +9,7 @@ fully configured environment.
 
 ### Prerequisites
 
-Only `curl`, `git`, and a POSIX shell are required on the target machine.
+Only `curl`, `git`, and `bash` are required on the target machine.
 **No Python required** — pixi is a static binary installed via `curl | sh`.
 
 ### Personal bootstrap (SSH, private repos)
@@ -28,7 +28,7 @@ mkdir -p ~/git/source
 git clone git@github.com:ickc/provision.git ~/git/source/provision
 
 # 3. Run bootstrap
-"${PIXI_HOME}/bin/pixi" run -d ~/git/source/provision bootstrap
+"${PIXI_HOME}/bin/pixi" run --manifest-path ~/git/source/provision bootstrap
 ```
 
 ### Public bootstrap (HTTPS, no private repos)
@@ -47,7 +47,7 @@ mkdir -p ~/git/source
 git clone https://github.com/ickc/provision.git ~/git/source/provision
 
 # 3. Run bootstrap
-"${PIXI_HOME}/bin/pixi" run -d ~/git/source/provision bootstrap-public
+"${PIXI_HOME}/bin/pixi" run --manifest-path ~/git/source/provision bootstrap-public
 ```
 
 ### Why clone first?
