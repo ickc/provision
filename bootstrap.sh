@@ -2,9 +2,9 @@
 # Bootstrap a personal UNIX environment.
 #
 # Recommended usage (guarantees Python ≥ 3.10 via the pixi environment):
-#   git clone git@github.com:ickc/bootstrap.git /tmp/bootstrap
-#   cd /tmp/bootstrap && pixi run bootstrap          # personal (SSH)
-#   cd /tmp/bootstrap && pixi run bootstrap-public   # public (HTTPS)
+#   git clone git@github.com:ickc/provision.git /tmp/provision
+#   cd /tmp/provision && pixi run bootstrap          # personal (SSH)
+#   cd /tmp/provision && pixi run bootstrap-public   # public (HTTPS)
 #
 # Direct invocation (requires Python ≥ 3.10 on PATH):
 #   bash bootstrap.sh [--public]
@@ -64,8 +64,8 @@ if sys.version_info < (3, 10):
     print(textwrap.dedent(f"""\
         ERROR: python3 {sys.version} is too old (need ≥ 3.10).
         Run via the pixi project to get the right Python:
-          git clone git@github.com:ickc/bootstrap.git /tmp/bootstrap
-          cd /tmp/bootstrap && pixi run bootstrap
+          git clone git@github.com:ickc/provision.git /tmp/provision
+          cd /tmp/provision && pixi run bootstrap
         """), file=sys.stderr)
     sys.exit(1)
 EOF
@@ -77,7 +77,11 @@ fi
 title "Stage 1: envoy + tools"
 
 # StrictHostKeyChecking=accept-new covers the window before ssh-dir provides known_hosts.
-export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new"
+# Write accepted keys to a throwaway file, NOT ~/.ssh/known_hosts: Stage 2 clones ssh-dir
+# directly into ~/.ssh, and git refuses to clone into a non-empty directory.
+_known_hosts_tmp="$(mktemp)"
+trap 'rm -f "${_tmpenv}" "${_known_hosts_tmp}"' EXIT
+export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=${_known_hosts_tmp}"
 
 if [ "${PUBLIC}" = "1" ]; then
     git_clone_or_pull "https://github.com/ickc/envoy.git" "${ENVOY_DIR}"
