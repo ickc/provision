@@ -45,6 +45,7 @@ git_clone_or_pull() {
         git -C "${dest}" init
         git -C "${dest}" remote add origin "${url}"
         git -C "${dest}" fetch origin
+        git -C "${dest}" remote set-head origin --auto
         git -C "${dest}" reset --hard origin/HEAD
     else
         mkdir -p "${dest%/*}"
