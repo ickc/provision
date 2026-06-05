@@ -1,49 +1,113 @@
-#!/usr/bin/env sh
-# Stage 0: install pixi, clone bootstrap repo, hand off to `pixi run bootstrap`.
+#!/usr/bin/env bash
+# Bootstrap a personal UNIX environment.
 #
-# Usage:
+# Usage (one-liner on a fresh machine):
 #   curl -fsSL https://raw.githubusercontent.com/ickc/bootstrap/main/bootstrap.sh | bash
 #   curl -fsSL https://raw.githubusercontent.com/ickc/bootstrap/main/bootstrap.sh | bash -s -- --public
-set -eu
+#
+# Or from a local clone:
+#   bash bootstrap.sh [--public]
+#
+# Path 1 (default): SSH clones, ssh-dir → ~/.ssh, SSH key generated + registered.
+# Path 2 (--public): HTTPS clones, no ssh-dir, no SSH key generation.
 
-BOOTSTRAP_REPO="ickc/bootstrap"
-XDG_DATA_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}"
-BOOTSTRAP_DEST="${XDG_DATA_HOME}/bootstrap"
+set -euo pipefail
 
-# Parse --public flag (remaining args forwarded to pixi run bootstrap below)
+# ── parse --public ────────────────────────────────────────────────────────────
 PUBLIC=0
-for _arg in "$@"; do
-    [ "${_arg}" = "--public" ] && PUBLIC=1
-done
-unset _arg
+for _a in "$@"; do [ "${_a}" = "--public" ] && PUBLIC=1; done
 
-# Install pixi if not already in PATH
-if ! command -v pixi > /dev/null 2>&1; then
-    curl -fsSL https://pixi.sh/install.sh | bash
-    # The official installer adds ~/.pixi/bin to PATH in shell init files but
-    # not to the current process; add it now.
-    export PATH="${HOME}/.pixi/bin:${PATH}"
-fi
+# ── helpers ───────────────────────────────────────────────────────────────────
+title() { echo; echo "════════════════════════════════════════"; echo "  $*"; }
 
-# Clone or update this bootstrap repo
-if [ -d "${BOOTSTRAP_DEST}/.git" ]; then
-    git -C "${BOOTSTRAP_DEST}" pull
-else
-    mkdir -p "${XDG_DATA_HOME}"
-    if [ "${PUBLIC}" = "1" ]; then
-        git clone "https://github.com/${BOOTSTRAP_REPO}.git" "${BOOTSTRAP_DEST}"
+# Clone if absent; pull if the destination is already a git repo.
+git_clone_or_pull() {
+    local url="${1}" dest="${2}"
+    if [ -d "${dest}/.git" ]; then
+        git -C "${dest}" pull
     else
-        # Assumes SSH agent forwarding is active; accept-new because known_hosts
-        # is not yet populated from ssh-dir (that happens in Stage 2).
-        GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new" \
-            git clone "git@github.com:${BOOTSTRAP_REPO}.git" "${BOOTSTRAP_DEST}"
+        mkdir -p "${dest%/*}"
+        git clone "${url}" "${dest}"
+    fi
+}
+
+# Install a single envoy tool (idempotent: prints "already installed" if present).
+envoy_install() {
+    python3 "${ENVOY_DIR}/install/${1}.py" install "${@:2}"
+}
+
+# ── stage 0: env setup ────────────────────────────────────────────────────────
+title "Stage 0: env setup"
+
+# Download env.sh temporarily to derive __OPT_ROOT, PIXI_HOME, XDG_DATA_HOME, etc.
+# This is the only bootstrap download before envoy is cloned in Stage 1.
+_tmpenv="$(mktemp)"
+trap 'rm -f "${_tmpenv}"' EXIT
+curl -fsSL "https://raw.githubusercontent.com/ickc/envoy/main/env.sh" -o "${_tmpenv}"
+# shellcheck source=/dev/null
+. "${_tmpenv}"
+export PATH="${__OPT_ROOT}/bin:${__OPT_ROOT}/system/bin:${PIXI_HOME}/bin:${PATH}"
+ENVOY_DIR="${XDG_DATA_HOME}/envoy"
+
+# Install pixi via our own installer (respects PIXI_HOME = __OPT_ROOT/pixi).
+curl -fsSL "https://raw.githubusercontent.com/ickc/envoy/main/install/pixi.py" | python3 - install
+
+# ── stage 1: envoy + tools ────────────────────────────────────────────────────
+title "Stage 1: envoy + tools"
+
+# StrictHostKeyChecking=accept-new covers the window before ssh-dir provides known_hosts.
+export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new"
+
+if [ "${PUBLIC}" = "1" ]; then
+    git_clone_or_pull "https://github.com/ickc/envoy.git" "${ENVOY_DIR}"
+else
+    git_clone_or_pull "git@github.com:ickc/envoy.git" "${ENVOY_DIR}"
+fi
+# Re-source env.sh from the cloned repo (canonical copy going forward).
+# shellcheck source=/dev/null
+. "${ENVOY_DIR}/env.sh"
+
+envoy_install mamba
+envoy_install mamba_env --name system   # provides gh, git, zsh, navi, direnv, starship
+envoy_install zim
+envoy_install code
+envoy_install chezmoi
+envoy_install sman
+
+# ── stage 2: dotfiles + data repos ────────────────────────────────────────────
+title "Stage 2: dotfiles + data repos"
+
+if [ "${PUBLIC}" = "1" ]; then
+    chezmoi init --apply ickc/dotfiles
+    git_clone_or_pull "https://github.com/ickc/sman-snippets.git"    "${XDG_DATA_HOME}/sman/snippets"
+    git_clone_or_pull "https://github.com/ickc/navi-cheatsheets.git" "${XDG_DATA_HOME}/navi/cheats"
+else
+    chezmoi init --apply "git@github.com:ickc/dotfiles.git"
+    git_clone_or_pull "git@github.com:ickc/sman-snippets.git"    "${XDG_DATA_HOME}/sman/snippets"
+    git_clone_or_pull "git@github.com:ickc/navi-cheatsheets.git" "${XDG_DATA_HOME}/navi/cheats"
+    git_clone_or_pull "git@github.com:ickc/ssh-dir.git"          "${HOME}/.ssh"
+    if [ -f "${HOME}/.ssh/makefile" ]; then
+        make -C "${HOME}/.ssh" permission || true
     fi
 fi
 
-# Hand off to pixi; pass original args through
-cd "${BOOTSTRAP_DEST}"
-if [ "${PUBLIC}" = "1" ]; then
-    pixi run bootstrap-public
-else
-    pixi run bootstrap
+# ── stage 3: machine SSH identity (path 1 only) ───────────────────────────────
+if [ "${PUBLIC}" = "0" ]; then
+    title "Stage 3: machine SSH identity"
+
+    _ssh_key="${HOME}/.ssh/id_ed25519"
+    if [ -f "${_ssh_key}" ]; then
+        echo "${_ssh_key} already exists; skipping keygen."
+    else
+        ssh-keygen -t ed25519 -C "${USER}@$(hostname)" -f "${_ssh_key}"
+    fi
+
+    # Register pubkey with GitHub (interactive browser flow).
+    "${__OPT_ROOT}/system/bin/gh" auth login --git-protocol ssh --web || true
 fi
+
+# ── final: generate shell completions ─────────────────────────────────────────
+title "Final: generate shell completions"
+PYTHONPATH="${ENVOY_DIR}/src" python3 -m bsos.shell.completion generate
+
+title "Bootstrap complete."

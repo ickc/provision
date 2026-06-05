@@ -54,19 +54,19 @@ cd submodule/ssh-dir && make permission
 
 ## Bootstrap Flow (Phase 4)
 
-The one-liner entry point is `bootstrap.sh` (Stage 0, ~35 lines of POSIX sh). It:
-1. Installs pixi (if not present)
-2. Clones this repo to `$XDG_DATA_HOME/bootstrap` (SSH for path 1, HTTPS for path 2)
-3. Runs `pixi run bootstrap` (or `bootstrap-public`)
+`bootstrap.sh` is the single entry point — a self-contained bash script (~80 lines).
+It does NOT require this repo to be cloned first; `curl | bash` works on a fresh machine.
 
-The pixi tasks invoke `src/bootstrap/__main__.py`, a stdlib-only Python orchestrator:
+Stages:
 
+- **Stage 0**: downloads `env.sh` from envoy (temp) to derive `__OPT_ROOT`/`PIXI_HOME`/etc.;
+  installs pixi via `install/pixi.py` (our own script, respects `PIXI_HOME`).
 - **Stage 1** (all paths): clone envoy → `$XDG_DATA_HOME/envoy`; run `install/mamba.py`,
   `mamba_env.py --name system`, `zim.py`, `code.py`, `chezmoi.py`, `sman.py`
 - **Stage 2** (paths 1–2): `chezmoi init --apply ickc/dotfiles`; clone sman-snippets and
   navi-cheatsheets; (path 1 only) clone ssh-dir → `~/.ssh` + `make permission`
 - **Stage 3** (path 1 only, interactive): `ssh-keygen`; `gh auth login`
-- **Final** (all paths): `python -m bsos.shell.completion generate`
+- **Final** (all paths): `PYTHONPATH=$ENVOY_DIR/src python3 -m bsos.shell.completion generate`
 
 Path 1 (default) uses SSH throughout and assumes SSH agent forwarding is active.
 Path 2 (`--public`) uses HTTPS, skips ssh-dir and Stage 3.
@@ -77,6 +77,10 @@ curl -fsSL https://raw.githubusercontent.com/ickc/bootstrap/main/bootstrap.sh | 
 
 # Public bootstrap (HTTPS, no ssh-dir):
 curl -fsSL https://raw.githubusercontent.com/ickc/bootstrap/main/bootstrap.sh | bash -s -- --public
+
+# From a local clone (also works):
+bash bootstrap.sh [--public]
+pixi run bootstrap[-public]
 ```
 
 ## Key Paths (runtime)
