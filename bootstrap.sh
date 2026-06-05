@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Bootstrap a personal UNIX environment.
 #
-# Usage (one-liner on a fresh machine):
-#   curl -fsSL https://raw.githubusercontent.com/ickc/bootstrap/main/bootstrap.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/ickc/bootstrap/main/bootstrap.sh | bash -s -- --public
+# Recommended usage (guarantees Python ≥ 3.10 via the pixi environment):
+#   git clone git@github.com:ickc/bootstrap.git /tmp/bootstrap
+#   cd /tmp/bootstrap && pixi run bootstrap          # personal (SSH)
+#   cd /tmp/bootstrap && pixi run bootstrap-public   # public (HTTPS)
 #
-# Or from a local clone:
+# Direct invocation (requires Python ≥ 3.10 on PATH):
 #   bash bootstrap.sh [--public]
 #
 # Path 1 (default): SSH clones, ssh-dir → ~/.ssh, SSH key generated + registered.
@@ -51,6 +52,26 @@ ENVOY_DIR="${XDG_DATA_HOME}/envoy"
 
 # Install pixi; PIXI_HOME is already set by env.sh; PIXI_NO_PATH_UPDATE skips rc-file edits.
 PIXI_NO_PATH_UPDATE=1 curl -fsSL https://pixi.sh/install.sh | sh
+
+# ── verify python ────────────────────────────────────────────────────────────
+# Envoy installers require Python ≥ 3.10 (stdlib-only, but uses modern syntax).
+# When invoked via `pixi run bootstrap` the project env supplies the right
+# python3 automatically.  Fail fast here rather than getting a cryptic syntax
+# error deep in an installer.
+if ! python3 - <<'EOF'
+import sys, textwrap
+if sys.version_info < (3, 10):
+    print(textwrap.dedent(f"""\
+        ERROR: python3 {sys.version} is too old (need ≥ 3.10).
+        Run via the pixi project to get the right Python:
+          git clone git@github.com:ickc/bootstrap.git /tmp/bootstrap
+          cd /tmp/bootstrap && pixi run bootstrap
+        """), file=sys.stderr)
+    sys.exit(1)
+EOF
+then
+    exit 1
+fi
 
 # ── stage 1: envoy + tools ────────────────────────────────────────────────────
 title "Stage 1: envoy + tools"
