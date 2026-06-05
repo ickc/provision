@@ -37,7 +37,7 @@ title() { echo; echo "═══════════════════�
 # Clone if absent; pull if already a git repo; init+fetch if dir exists but isn't a repo.
 git_clone_or_pull() {
     local url="${1}" dest="${2}"
-    if [ -d "${dest}/.git" ]; then
+    if [ -d "${dest}" ] && git -C "${dest}" rev-parse --git-dir >/dev/null 2>&1; then
         git -C "${dest}" pull
     elif [ -d "${dest}" ]; then
         # Directory exists but is not a git repo (e.g. pre-existing ~/.ssh with authorized_keys).
