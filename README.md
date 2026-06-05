@@ -1,4 +1,4 @@
-# bootstrap
+# provision
 
 One-shot personal UNIX environment bootstrap. Composes
 [envoy](https://github.com/ickc/envoy) installers, dotfiles, data repos, and
@@ -25,10 +25,10 @@ PIXI_NO_PATH_UPDATE=1 curl -fsSL https://pixi.sh/install.sh | sh
 
 # 2. Clone this repo
 mkdir -p ~/git/source
-git clone git@github.com:ickc/bootstrap.git ~/git/source/bootstrap
+git clone git@github.com:ickc/provision.git ~/git/source/provision
 
 # 3. Run bootstrap
-"${PIXI_HOME}/bin/pixi" run -d ~/git/source/bootstrap bootstrap
+"${PIXI_HOME}/bin/pixi" run -d ~/git/source/provision bootstrap
 ```
 
 ### Public bootstrap (HTTPS, no private repos)
@@ -44,10 +44,10 @@ PIXI_NO_PATH_UPDATE=1 curl -fsSL https://pixi.sh/install.sh | sh
 
 # 2. Clone this repo
 mkdir -p ~/git/source
-git clone https://github.com/ickc/bootstrap.git ~/git/source/bootstrap
+git clone https://github.com/ickc/provision.git ~/git/source/provision
 
 # 3. Run bootstrap
-"${PIXI_HOME}/bin/pixi" run -d ~/git/source/bootstrap bootstrap-public
+"${PIXI_HOME}/bin/pixi" run -d ~/git/source/provision bootstrap-public
 ```
 
 ### Why clone first?

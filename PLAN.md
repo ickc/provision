@@ -18,7 +18,7 @@
 | `dotfiles` | chezmoi source state: shell configs, tool configs (public, **no secrets**) | public |
 | `sman-snippets` | sman snippet data | public |
 | `navi-cheatsheets` | navi cheatsheet data | public |
-| `bootstrap` (this repo) | Orchestrator, submodule pinning, bootstrap one-liner | public |
+| `provision` (this repo) | Orchestrator, submodule pinning, bootstrap one-liner | public |
 | `ssh-dir` | SSH `config`, `known_hosts`, `authorized_keys` (no private keys) | **private** |
 
 ## Supported Bootstrap Paths
@@ -787,9 +787,9 @@ clones into pulls.
 ### The one-liner
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ickc/bootstrap/main/bootstrap.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ickc/provision/main/bootstrap.sh | bash
 # public mode (no SSH, no ssh-dir):
-curl -fsSL https://raw.githubusercontent.com/ickc/bootstrap/main/bootstrap.sh | bash -s -- --public
+curl -fsSL https://raw.githubusercontent.com/ickc/provision/main/bootstrap.sh | bash -s -- --public
 ```
 
 `bootstrap.sh` is the ~30-line Stage-0 script — **the only shell script in the system**,

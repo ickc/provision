@@ -60,7 +60,7 @@ It does NOT require this repo to be cloned first; `curl | bash` works on a fresh
 Stages:
 
 - **Stage 0**: downloads `env.sh` from envoy (temp) to derive `__OPT_ROOT`/`PIXI_HOME`/etc.;
-  installs pixi via `install/pixi.py` (our own script, respects `PIXI_HOME`).
+  installs pixi via the official `pixi.sh/install.sh` (`PIXI_NO_PATH_UPDATE=1`; respects `PIXI_HOME`).
 - **Stage 1** (all paths): clone envoy → `$XDG_DATA_HOME/envoy`; run `install/mamba.py`,
   `mamba_env.py --name system`, `zim.py`, `code.py`, `chezmoi.py`, `sman.py`
 - **Stage 2** (paths 1–2): `chezmoi init --apply ickc/dotfiles`; clone sman-snippets and
@@ -73,10 +73,10 @@ Path 2 (`--public`) uses HTTPS, skips ssh-dir and Stage 3.
 
 ```bash
 # Full personal bootstrap:
-curl -fsSL https://raw.githubusercontent.com/ickc/bootstrap/main/bootstrap.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ickc/provision/main/bootstrap.sh | bash
 
 # Public bootstrap (HTTPS, no ssh-dir):
-curl -fsSL https://raw.githubusercontent.com/ickc/bootstrap/main/bootstrap.sh | bash -s -- --public
+curl -fsSL https://raw.githubusercontent.com/ickc/provision/main/bootstrap.sh | bash -s -- --public
 
 # From a local clone (also works):
 bash bootstrap.sh [--public]
