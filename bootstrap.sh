@@ -34,28 +34,51 @@ done
 # ── helpers ───────────────────────────────────────────────────────────────────
 title() { echo; echo "════════════════════════════════════════"; echo "  $*"; }
 
-# Clone if absent; pull if already a git repo; init+fetch if dir exists but isn't a repo.
+# Hard-sync a repo to its remote default branch: fetch, then force the working
+# tree onto origin's default branch (e.g. main). This intentionally:
+#   • follows a renamed default branch — clones stuck on master move to main;
+#   • discards local commits and uncommitted changes to TRACKED files (these are
+#     managed runtime clones, not dev checkouts; the remote is the source of truth);
+#   • leaves UNTRACKED files in place (e.g. private keys under ~/.ssh).
+git_hard_sync() {
+    local dest="${1}" url="${2}" branch
+    if git -C "${dest}" remote get-url origin >/dev/null 2>&1; then
+        git -C "${dest}" remote set-url origin "${url}"   # enforce ssh/https for the chosen path
+    else
+        git -C "${dest}" remote add origin "${url}"
+    fi
+    git -C "${dest}" fetch origin
+    git -C "${dest}" remote set-head origin --auto         # refresh origin/HEAD → remote default
+    branch="$(git -C "${dest}" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)"
+    branch="${branch#origin/}"
+    : "${branch:=main}"                                    # fallback if HEAD can't be resolved
+    git -C "${dest}" checkout -f -B "${branch}" "origin/${branch}"
+}
+
+# Clone if absent; hard-sync to the remote default branch if it already exists;
+# init+sync if the dir exists but isn't a repo. The init+sync path overlays the
+# repo's tracked files while leaving untracked files intact (e.g. a pre-existing
+# ~/.ssh holding authorized_keys and per-machine private keys).
 git_clone_or_pull() {
     local url="${1}" dest="${2}"
     if [ -d "${dest}" ] && git -C "${dest}" rev-parse --git-dir >/dev/null 2>&1; then
-        git -C "${dest}" pull
+        git_hard_sync "${dest}" "${url}"
     elif [ -d "${dest}" ]; then
-        # Directory exists but is not a git repo (e.g. pre-existing ~/.ssh with authorized_keys).
-        # git init + reset overlays tracked files while leaving untracked files (private keys) intact.
-        git -C "${dest}" init
-        git -C "${dest}" remote add origin "${url}"
-        git -C "${dest}" fetch origin
-        git -C "${dest}" remote set-head origin --auto
-        git -C "${dest}" reset --hard origin/HEAD
+        git -C "${dest}" init -q
+        git_hard_sync "${dest}" "${url}"
     else
         mkdir -p "${dest%/*}"
         git clone "${url}" "${dest}"
     fi
 }
 
-# Install a single envoy tool (idempotent: prints "already installed" if present).
+# Install on first run, update if already present — the install-or-update path.
+# 'update' is force-install: a fresh machine installs; an existing one refreshes
+# (recipe tools re-download the latest asset; mamba does an in-place -u update;
+# mamba_env runs `mamba env update --prune`). 'update' == 'install' when nothing
+# is there yet, so this single verb covers both first-run and re-run.
 envoy_install() {
-    python3 "${ENVOY_DIR}/install/${1}.py" install "${@:2}"
+    python3 "${ENVOY_DIR}/install/${1}.py" update "${@:2}"
 }
 
 # ── stage 0: env setup ────────────────────────────────────────────────────────
@@ -138,6 +161,31 @@ else
     if [ -f "${HOME}/.ssh/makefile" ]; then
         make -C "${HOME}/.ssh" permission || echo "WARNING: 'make permission' failed; check ~/.ssh permissions manually." >&2
     fi
+fi
+
+# ── stage 2b: zim modules + init.zsh ──────────────────────────────────────────
+# zimfw.zsh is placed in Stage 1; the modules and init.zsh are built here against
+# the .zimrc chezmoi just applied. The dotfiles' .zshrc does this lazily on first
+# interactive zsh, but doing it now leaves the shell fully provisioned and surfaces
+# failures during bootstrap instead of at the next prompt.
+title "Stage 2b: zim modules"
+if [ -f "${ZIM_HOME}/zimfw.zsh" ] && [ -f "${HOME}/.zimrc" ] && command -v zsh >/dev/null 2>&1; then
+    # Legacy git-based module checkouts (pre-degit installs, common after a migration)
+    # carry a .git dir and no .zdegit marker, so degit refuses to manage them. Wipe
+    # them once so degit reinstalls cleanly; degit-managed modules have no .git and
+    # are left untouched (no needless re-download on subsequent runs).
+    if [ -d "${ZIM_HOME}/modules" ] && \
+       [ -n "$(find "${ZIM_HOME}/modules" -maxdepth 2 -name .git -print -quit 2>/dev/null)" ]; then
+        echo "Removing legacy git-based zim modules so degit can rebuild cleanly."
+        rm -rf "${ZIM_HOME}/modules"
+    fi
+    # Mirror .zshrc: select the degit tool, then init (install missing modules +
+    # build init.zsh). Best-effort: degit pulls tarballs from the rate-limited
+    # api.github.com, so on failure we defer to the .zshrc retry on first zsh.
+    zsh -c 'zstyle ":zim:zmodule" use degit; source "${ZIM_HOME}/zimfw.zsh" init -q' \
+        || echo "WARNING: 'zimfw init' failed; it will retry on first interactive zsh." >&2
+else
+    echo "Skipping zim init (need zimfw.zsh, ~/.zimrc, and zsh on PATH)."
 fi
 
 # ── stage 3: machine SSH identity (path 1 only) ───────────────────────────────
