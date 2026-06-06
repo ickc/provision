@@ -94,6 +94,20 @@ curl -fsSL "https://raw.githubusercontent.com/ickc/envoy/main/env.sh" -o "${_tmp
 export PATH="${__OPT_ROOT}/bin:${__OPT_ROOT}/system/bin:${PIXI_HOME}/bin:${PATH}"
 ENVOY_DIR="${XDG_DATA_HOME}/envoy"
 
+# XDG_CONFIG_DIRS may contain invalid paths (e.g. a broken nix profile symlink pointing
+# to a file instead of a directory). Filter to actual directories so tools like chezmoi
+# don't error when scanning the list.
+if [ -n "${XDG_CONFIG_DIRS:-}" ]; then
+    _xdg_filtered=""
+    _IFS_SAVE="${IFS}"; IFS=:
+    for _xdg_d in ${XDG_CONFIG_DIRS}; do
+        [ -d "${_xdg_d}" ] && _xdg_filtered="${_xdg_filtered:+${_xdg_filtered}:}${_xdg_d}"
+    done
+    IFS="${_IFS_SAVE}"
+    export XDG_CONFIG_DIRS="${_xdg_filtered}"
+    unset _xdg_filtered _xdg_d _IFS_SAVE
+fi
+
 # Install pixi; PIXI_HOME is already set by env.sh; PIXI_NO_PATH_UPDATE skips rc-file edits.
 if [ ! -x "${PIXI_HOME}/bin/pixi" ]; then
     PIXI_NO_PATH_UPDATE=1 curl -fsSL https://pixi.sh/install.sh | sh
@@ -207,6 +221,8 @@ if [ "${PUBLIC}" = "0" ]; then
     if [ "${NO_IDENTITY}" = "1" ]; then
         echo "--no-identity: skipping 'gh auth login'. Register this key later with:"
         echo "  gh auth login --git-protocol ssh --web   # then: gh ssh-key add ${_ssh_key}.pub"
+    elif "${__OPT_ROOT}/system/bin/gh" auth status &>/dev/null; then
+        echo "gh: already authenticated; skipping 'gh auth login'."
     else
         "${__OPT_ROOT}/system/bin/gh" auth login --git-protocol ssh --web || true
     fi
