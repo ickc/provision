@@ -67,7 +67,7 @@ with Python 3.6 or no Python at all. The clone is cheap (shallow is fine:
 | Stage | Description |
 |-------|-------------|
 | **0** | Downloads `env.sh` from envoy to set `__OPT_ROOT`, `PIXI_HOME`, `XDG_DATA_HOME`; installs pixi (idempotent). |
-| **1** | Clones envoy → `$XDG_DATA_HOME/envoy`; runs `mamba`, `mamba_env --name system`, `zim`, `code`, `chezmoi`, `sman` installers. |
+| **1** | Clones envoy → `$XDG_DATA_HOME/envoy`; runs `micromamba`, `mamba_env --name system`, `zim`, `code`, `chezmoi`, `sman` installers. |
 | **2** | Applies dotfiles via chezmoi; clones sman-snippets and navi-cheatsheets. Personal path also clones ssh-dir → `~/.ssh`. |
 | **3** | *(Personal path only)* Generates machine SSH key (`ed25519`); runs `gh auth login` (interactive browser flow). |
 | **Final** | Generates shell completions for all installed tools. |
