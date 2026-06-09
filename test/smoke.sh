@@ -24,9 +24,11 @@ fi
 # shellcheck source=/dev/null
 . "${ENVOY_DIR}/env.sh"
 
-SYSTEM_BIN="${__OPT_ROOT}/system/bin"   # mamba `system` env (gh, git, task, zsh, …)
+SYSTEM_BIN="${__OPT_ROOT}/system/bin"   # the `system` env (gh, git, task, zsh, …)
 # Reconstruct the PATH a provisioned login shell gets; a bare CI shell has none of it.
-export PATH="${__OPT_ROOT}/bin:${SYSTEM_BIN}:${MAMBA_ROOT_PREFIX}/bin:${PIXI_HOME}/bin:${PATH}"
+# micromamba is a single binary in ${__OPT_ROOT}/bin (first below); the root prefix
+# holds only pkgs/envs, so it is not on PATH.
+export PATH="${__OPT_ROOT}/bin:${SYSTEM_BIN}:${PIXI_HOME}/bin:${PATH}"
 
 # ── assertion harness ─────────────────────────────────────────────────────────
 _pass=0
@@ -50,12 +52,12 @@ envoy_test() { python3 "${ENVOY_DIR}/install/${1}.py" test; }
 
 echo "== core toolchain =="
 check "pixi functional"  pixi --version
-check "mamba functional" "${MAMBA_ROOT_PREFIX}/bin/mamba" --version
+check "micromamba functional" "${__OPT_ROOT}/bin/micromamba" --version
 
 echo "== envoy installers self-test =="
 # Only the tools bootstrap.sh Stage 1 actually installs — envoy also ships
-# clifton/codex/gh/pixi installers, but the bootstrap does not run those.
-for _t in mamba mamba_env zim code chezmoi sman; do
+# clifton/codex/gh/mamba/pixi installers, but the bootstrap does not run those.
+for _t in micromamba mamba_env zim code chezmoi sman; do
     check "envoy: ${_t}" envoy_test "${_t}"
 done
 

@@ -74,8 +74,8 @@ git_clone_or_pull() {
 
 # Install on first run, update if already present — the install-or-update path.
 # 'update' is force-install: a fresh machine installs; an existing one refreshes
-# (recipe tools re-download the latest asset; mamba does an in-place -u update;
-# mamba_env runs `mamba env update --prune`). 'update' == 'install' when nothing
+# (recipe tools re-download the latest asset; mamba_env runs
+# `micromamba env update --prune`). 'update' == 'install' when nothing
 # is there yet, so this single verb covers both first-run and re-run.
 envoy_install() {
     python3 "${ENVOY_DIR}/install/${1}.py" update "${@:2}"
@@ -153,8 +153,8 @@ fi
 # shellcheck source=/dev/null
 . "${ENVOY_DIR}/env.sh"
 
-envoy_install mamba
-envoy_install mamba_env --name system   # provides gh, git, zsh, navi, direnv, starship
+envoy_install micromamba
+envoy_install mamba_env --name system --backend micromamba   # provides gh, git, zsh, navi, direnv, starship
 envoy_install zim
 envoy_install code
 envoy_install chezmoi
