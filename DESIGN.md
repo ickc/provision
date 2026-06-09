@@ -67,7 +67,7 @@ All ultimately set by `dotfiles/home/.zshenv`:
 |----------|-----------------|---------|
 | `__LOCAL_ROOT` | `$HOME/.local` | Arch-**independent** prefix (share, state, zim) |
 | `__OPT_ROOT` | `$HOME/.local/opt/$__OSTYPE-$__ARCH` | Arch-**dependent** prefix (binaries, conda envs) |
-| `MAMBA_ROOT_PREFIX` | `$__OPT_ROOT/miniforge3` | Miniforge installation prefix |
+| `MAMBA_ROOT_PREFIX` | `$__OPT_ROOT/micromamba` | micromamba root prefix (pkgs + named envs); opt-in Miniforge installs here too |
 | `PIXI_HOME` | `$__OPT_ROOT/pixi` | Pixi installation prefix |
 | `XDG_CONFIG_HOME` | `$HOME/.config` | Symlinked wholesale to `dotfiles/config/` |
 | `XDG_DATA_HOME` | `$__LOCAL_ROOT/share` | |

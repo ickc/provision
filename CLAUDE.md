@@ -15,7 +15,7 @@ bootstrapped end-systems clone each component to its runtime XDG location.
 |------|------|---------|
 | `submodule/ssh-dir` | `ickc/ssh-dir` (private) | SSH config, known_hosts, authorized_keys |
 | `submodule/dotfiles` | `ickc/dotfiles` (public) | chezmoi source state (shell config, XDG config) |
-| `submodule/envoy` | `ickc/envoy` (public) | Python installers (mamba, sman, zim, VS Code CLI, chezmoi, …) |
+| `submodule/envoy` | `ickc/envoy` (public) | Python installers (micromamba, mamba, sman, zim, VS Code CLI, chezmoi, …) |
 | `submodule/sman-snippets` | `ickc/sman-snippets` (public) | Shell snippet manager snippets |
 | `submodule/navi-cheatsheets` | `ickc/navi-cheatsheets` (public) | navi cheatsheet data |
 
@@ -65,8 +65,8 @@ Stages:
 
 - **Stage 0**: downloads `env.sh` from envoy (temp) to derive `__OPT_ROOT`/`PIXI_HOME`/etc.;
   installs pixi via the official `pixi.sh/install.sh` (`PIXI_NO_PATH_UPDATE=1`; respects `PIXI_HOME`).
-- **Stage 1** (all paths): clone envoy → `$XDG_DATA_HOME/envoy`; run `install/mamba.py`,
-  `mamba_env.py --name system`, `zim.py`, `code.py`, `chezmoi.py`, `sman.py`
+- **Stage 1** (all paths): clone envoy → `$XDG_DATA_HOME/envoy`; run `install/micromamba.py`,
+  `mamba_env.py --name system --backend micromamba`, `zim.py`, `code.py`, `chezmoi.py`, `sman.py`
 - **Stage 2** (paths 1–2): `chezmoi init --apply ickc/dotfiles`; clone sman-snippets and
   navi-cheatsheets; (path 1 only) clone ssh-dir → `~/.ssh` + `make permission`
 - **Stage 3** (path 1 only, interactive): `ssh-keygen`; `gh auth login`.
@@ -105,7 +105,7 @@ Set by `dotfiles` (chezmoi-applied) and `envoy/env.sh`:
 
 - `$__LOCAL_ROOT` (`$HOME/.local`) — arch-independent prefix
 - `$__OPT_ROOT` (`$HOME/.local/opt/$__OSTYPE-$__ARCH`) — arch-dependent prefix; binaries in `$__OPT_ROOT/bin`
-- `$MAMBA_ROOT_PREFIX` (`$__OPT_ROOT/miniforge3`) — Miniforge installation
+- `$MAMBA_ROOT_PREFIX` (`$__OPT_ROOT/micromamba`) — micromamba root prefix (pkgs cache + named envs); also where opt-in Miniforge installs
 - `$XDG_DATA_HOME` (`$HOME/.local/share`) — runtime installs: envoy, sman/snippets, navi/cheats
 - `$XDG_CONFIG_HOME` (`$HOME/.config`) — real directory managed by chezmoi (Phase 3+)
 - `$HOME/.ssh` — ssh-dir repo clone (path 1 only); private keys generated per-machine, never committed
