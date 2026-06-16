@@ -85,7 +85,7 @@ This directly addresses the use case of bootstrapping testing environments. The 
 
 ### Phase 3 — Separate envoy into generic and personal
 
-- `envoy` retains: installer functions (mamba, VS Code CLI, sman, zim), `system` conda env as canonical example, `bsos`-based CSV→YML generation tooling.
+- `envoy` retains: installer functions (mamba, VS Code CLI, sman), `system` conda env as canonical example, `bsos`-based CSV→YML generation tooling.
 - `envoy-personal` (new, public): personal conda env CSVs + generated YMLs (py3xx, jupyterlab variants), personal `system.csv` overrides if any.
 - `provision` (this repo) references `envoy-personal` as a submodule (or just documents how to wire it in).
 
@@ -103,7 +103,7 @@ The key constraint: Taskfile is available only after stage 0 completes. Stage 0 
 
 Per component:
 - Dotfiles: refuse-if-exists by default; `--force` to overwrite. Prevents accidental destruction of manual edits.
-- Binary installs (mamba, sman, VS Code CLI, zim): update-if-installed semantics (already partially done for mamba).
+- Binary installs (mamba, sman, VS Code CLI): update-if-installed semantics (already partially done for mamba).
 - Conda envs: `mamba env update --prune` (already done).
 - SSH key generation: already idempotent (skips if key exists).
 - `ssh_dir_install`: currently destructive (`rm -rf ~/.ssh`). Should check for existing install and either skip or `--force`.

@@ -373,7 +373,6 @@ src/bsos/installers/
   mamba_env.py      # conda environment installer (uses local env files or URL)
   pixi.py           # pixi installer
   sman.py           # sman snippet manager installer
-  zim.py            # zim zsh plugin manager installer
 ```
 
 A companion `bsos.shell` subpackage holds:
@@ -535,7 +534,7 @@ dotfiles repo entirely.
 The current layout:
 ```
 dotfiles/
-  home/.zshenv, .zshrc, .zimrc, ...   # symlinked to ~
+  home/.zshenv, .zshrc, ...   # symlinked to ~
   config/                              # symlinked wholesale as ~/.config
   makefile
 ```
@@ -545,7 +544,6 @@ Becomes a chezmoi source directory:
 dotfiles/
   dot_zshenv.tmpl              # template: sets personal vars, sources envoy/env.sh
   dot_zshrc.tmpl               # template: ml_*/mu_* modules, tool integrations
-  dot_zimrc                    # static
   dot_bash_profile             # static
   dot_bashrc                   # static
   dot_config/
@@ -679,7 +677,7 @@ level: envoy is a black box reachable with a stock `python3` (the same `curl | p
 contract Phase 2's CI proves), so this repo depends on neither envoy's internals nor its
 pixi environment.
 
-- `mamba`, `mamba_env` (`install --name system`), `zim`, `code`, `sman`, and the new
+- `mamba`, `mamba_env` (`install --name system`), `code`, `sman`, and the new
   `chezmoi` are all compiled installers run as `python3 $XDG_DATA_HOME/envoy/install/<tool>.py install`.
 - `generate-completions` is the one piece not in the compiled set (it lives in
   `bsos.shell.completion`, which is stdlib-only apart from `bsos.installers._env`). The
@@ -732,7 +730,6 @@ Stage 1 — envoy + its tools  (this stage alone == path 3):       [all paths]
   install/mamba.py     install
   install/mamba_env.py install --name system   # supplies gh, git, task, zsh,
                                                #   navi, direnv, starship, steady-state pixi
-  install/zim.py       install
   install/code.py      install
   install/chezmoi.py   install                 # tool only; apply is Stage 2
   install/sman.py      install                 # sman binary + sman.rc

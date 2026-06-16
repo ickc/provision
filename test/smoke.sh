@@ -57,7 +57,7 @@ check "micromamba functional" "${__OPT_ROOT}/bin/micromamba" --version
 echo "== envoy installers self-test =="
 # Only the tools bootstrap.sh Stage 1 actually installs — envoy also ships
 # clifton/codex/gh/mamba/pixi installers, but the bootstrap does not run those.
-for _t in micromamba mamba_env zim code chezmoi sman; do
+for _t in micromamba mamba_env code chezmoi sman; do
     check "envoy: ${_t}" envoy_test "${_t}"
 done
 

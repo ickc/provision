@@ -133,7 +133,7 @@ without proportional complexity growth.
 **Idea:** Use [chezmoi](https://www.chezmoi.io/) to manage the **dotfiles
 layer only** — the files that land in `$HOME` and `$XDG_CONFIG_HOME`. Envoy
 remains an independent project handling software installation (mamba, VS Code
-CLI, sman, zim). The bootstrap orchestrator (this repo, or envoy's
+CLI, sman). The bootstrap orchestrator (this repo, or envoy's
 `bootstrap.sh`) calls both: envoy for tooling, chezmoi for configuration.
 
 Chezmoi is a single static binary, no sudo
@@ -153,7 +153,7 @@ dotfiles repo (restructured as chezmoi source):
   private_dot_ssh/             # mode 0600 enforcement; or age-encrypted
 
 bootstrap sequence:
-  1. envoy: install mamba, system env, VS Code CLI, zim (unchanged)
+  1. envoy: install mamba, system env, VS Code CLI (unchanged)
   2. chezmoi init + chezmoi apply (replaces `make all` in dotfiles)
   3. envoy: gh auth, sman, ssh-dir (unchanged, or ssh-dir absorbed by chezmoi)
 ```
@@ -238,7 +238,6 @@ bootstrap/              # the core library (reusable)
     code.py             # install VS Code CLI
     mamba.py            # install miniforge3
     sman.py             # install sman + snippets
-    zim.py              # install zim
     dotfiles.py         # clone + make all
     ssh_dir.py          # clone ssh-dir to ~/.ssh
   registry.py           # component registry with dependency graph

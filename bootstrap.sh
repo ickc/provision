@@ -155,7 +155,6 @@ fi
 
 envoy_install micromamba
 envoy_install mamba_env --name system --backend micromamba   # provides gh, git, zsh, navi, direnv, starship
-envoy_install zim
 envoy_install code
 envoy_install chezmoi
 envoy_install sman
@@ -175,31 +174,6 @@ else
     if [ -f "${HOME}/.ssh/makefile" ]; then
         make -C "${HOME}/.ssh" permission || echo "WARNING: 'make permission' failed; check ~/.ssh permissions manually." >&2
     fi
-fi
-
-# ── stage 2b: zim modules + init.zsh ──────────────────────────────────────────
-# zimfw.zsh is placed in Stage 1; the modules and init.zsh are built here against
-# the .zimrc chezmoi just applied. The dotfiles' .zshrc does this lazily on first
-# interactive zsh, but doing it now leaves the shell fully provisioned and surfaces
-# failures during bootstrap instead of at the next prompt.
-title "Stage 2b: zim modules"
-if [ -f "${ZIM_HOME}/zimfw.zsh" ] && [ -f "${HOME}/.zimrc" ] && command -v zsh >/dev/null 2>&1; then
-    # Legacy git-based module checkouts (pre-degit installs, common after a migration)
-    # carry a .git dir and no .zdegit marker, so degit refuses to manage them. Wipe
-    # them once so degit reinstalls cleanly; degit-managed modules have no .git and
-    # are left untouched (no needless re-download on subsequent runs).
-    if [ -d "${ZIM_HOME}/modules" ] && \
-       [ -n "$(find "${ZIM_HOME}/modules" -maxdepth 2 -name .git -print -quit 2>/dev/null)" ]; then
-        echo "Removing legacy git-based zim modules so degit can rebuild cleanly."
-        rm -rf "${ZIM_HOME}/modules"
-    fi
-    # Mirror .zshrc: select the degit tool, then init (install missing modules +
-    # build init.zsh). Best-effort: degit pulls tarballs from the rate-limited
-    # api.github.com, so on failure we defer to the .zshrc retry on first zsh.
-    zsh -c 'zstyle ":zim:zmodule" use degit; source "${ZIM_HOME}/zimfw.zsh" init -q' \
-        || echo "WARNING: 'zimfw init' failed; it will retry on first interactive zsh." >&2
-else
-    echo "Skipping zim init (need zimfw.zsh, ~/.zimrc, and zsh on PATH)."
 fi
 
 # ── stage 3: machine SSH identity (path 1 only) ───────────────────────────────
