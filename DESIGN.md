@@ -91,7 +91,6 @@ The `__PATH` / `__MANPATH` snapshot trick in `.zshrc` ensures PATH is reset to t
 | Darwin x86_64 | ✓ | ✓ | |
 | Linux x86_64 | ✓ | ✓ | |
 | Linux aarch64 | ✓ | ✓ | |
-| Linux ppc64le | ✓ | ✓ | |
 | FreeBSD amd64 | partial | ✗ | sman installer supports it; conda/mamba does not |
 
 FreeBSD support is partial: the sman binary installer handles FreeBSD, but Miniforge3 and all conda env steps will fail. A full bootstrap on FreeBSD would need an alternative to mamba for the system environment.

@@ -108,11 +108,10 @@ Where `$XDG_DATA_HOME` defaults to `~/.local/share` and `$__OPT_ROOT` defaults t
 | Darwin x86_64 | yes | yes |
 | Linux x86_64 | yes | yes |
 | Linux aarch64 | yes | yes |
-| Linux ppc64le | no (pixi unavailable) | where trivial |
 | FreeBSD amd64 | no | where trivial |
 
-ppc64le and FreeBSD are not bootstrap targets (pixi has no binary). However,
-individual installer scripts that support these platforms at negligible cost (e.g.,
+FreeBSD is not a bootstrap target (pixi has no binary). However,
+individual installer scripts that support it at negligible cost (e.g.,
 adding a download URL case) should continue to do so.
 
 ---
@@ -929,5 +928,5 @@ with zero dependencies. With pixi, single-tool install requires pixi first:
 `pixi run install-code`. This is a deliberate tradeoff: pixi is a single static binary
 (~20s download), and the benefit of real task orchestration, dependency tracking, and
 testability outweighs the loss of zero-dependency scripts. For platforms without pixi
-(ppc64le, FreeBSD), individual installer functions remain usable as plain shell by
+(e.g. FreeBSD), individual installer functions remain usable as plain shell by
 sourcing them directly.
