@@ -55,14 +55,17 @@ check "pixi functional"  pixi --version
 check "micromamba functional" "${__OPT_ROOT}/bin/micromamba" --version
 
 echo "== envoy installers self-test =="
-# Only the tools bootstrap.sh Stage 1 actually installs — envoy also ships
-# clifton/codex/gh/mamba/pixi installers, but the bootstrap does not run those.
-for _t in micromamba mamba_env code chezmoi sman; do
+# micromamba (binary in $__OPT_ROOT/bin) and the `system` env (validated by
+# mamba_env) are produced by Stage 1 directly; code and sman are the only tools
+# still installed via envoy's Python installers (Stage 2). chezmoi/pixi now ship
+# in the conda `system` env, and envoy also ships clifton/codex/gh/mamba
+# installers the bootstrap does not run.
+for _t in micromamba mamba_env code sman; do
     check "envoy: ${_t}" envoy_test "${_t}"
 done
 
 echo "== system conda env =="
-for _t in git gh task zsh navi starship direnv; do
+for _t in git gh task zsh navi starship direnv chezmoi pixi; do
     check "system: ${_t}" test -x "${SYSTEM_BIN}/${_t}"
 done
 check "git --version"  "${SYSTEM_BIN}/git" --version

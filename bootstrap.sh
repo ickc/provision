@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 # Bootstrap a personal UNIX environment.
 #
-# Recommended usage (guarantees Python ≥ 3.10 via the pixi environment):
-#   git clone git@github.com:ickc/provision.git /tmp/provision
-#   cd /tmp/provision && pixi run bootstrap          # personal (SSH)
-#   cd /tmp/provision && pixi run bootstrap-public   # public (HTTPS)
+# Self-contained: `curl | bash` works on a bare machine — the only external
+# dependency is curl. Everything else is bootstrapped from micromamba:
 #
-# Direct invocation (requires Python ≥ 3.10 on PATH):
-#   bash bootstrap.sh [--public]
+#   micromamba  →  conda `system` env (pixi, git, gh, zsh, chezmoi, …)  →  the rest
+#
+# Because the `system` env brings pixi, the Python-based envoy installers are run
+# via `pixi run` inside the envoy clone, which guarantees Python ≥ 3.10 from
+# envoy's pixi env — no system Python of any version is required.
+#
+#   curl -fsSL https://raw.githubusercontent.com/ickc/provision/main/bootstrap.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/ickc/provision/main/bootstrap.sh | bash -s -- --public
+#   bash bootstrap.sh [--public]                 # from a local clone
+#   pixi run bootstrap[-public]                  # convenience wrappers
 #
 # Path 1 (default): SSH clones, ssh-dir → ~/.ssh, SSH key generated + registered.
 # Path 2 (--public): HTTPS clones, no ssh-dir, no SSH key generation.
@@ -72,26 +78,19 @@ git_clone_or_pull() {
     fi
 }
 
-# Install on first run, update if already present — the install-or-update path.
-# 'update' is force-install: a fresh machine installs; an existing one refreshes
-# (recipe tools re-download the latest asset; mamba_env runs
-# `micromamba env update --prune`). 'update' == 'install' when nothing
-# is there yet, so this single verb covers both first-run and re-run.
-envoy_install() {
-    python3 "${ENVOY_DIR}/install/${1}.py" update "${@:2}"
-}
-
 # ── stage 0: env setup ────────────────────────────────────────────────────────
 title "Stage 0: env setup"
 
-# Download env.sh temporarily to derive __OPT_ROOT, PIXI_HOME, XDG_DATA_HOME, etc.
-# This is the only bootstrap download before envoy is cloned in Stage 1.
+# Download env.sh temporarily to derive __OSTYPE/__ARCH, __OPT_ROOT,
+# MAMBA_ROOT_PREFIX, XDG_DATA_HOME, etc. (it runs `uname -sm` for platform facts).
 _tmpenv="$(mktemp)"
-trap 'rm -f "${_tmpenv}"' EXIT
+_sysyml=""
+_known_hosts_tmp=""
+trap 'rm -f "${_tmpenv}" "${_sysyml}" "${_known_hosts_tmp}"' EXIT
 curl -fsSL "https://raw.githubusercontent.com/ickc/envoy/main/env.sh" -o "${_tmpenv}"
 # shellcheck source=/dev/null
 . "${_tmpenv}"
-export PATH="${__OPT_ROOT}/bin:${__OPT_ROOT}/system/bin:${PIXI_HOME}/bin:${PATH}"
+export PATH="${__OPT_ROOT}/bin:${__OPT_ROOT}/system/bin:${PATH}"
 ENVOY_DIR="${XDG_DATA_HOME}/envoy"
 
 # XDG_CONFIG_DIRS may contain invalid paths (e.g. a broken nix profile symlink pointing
@@ -108,40 +107,49 @@ if [ -n "${XDG_CONFIG_DIRS:-}" ]; then
     unset _xdg_filtered _xdg_d _IFS_SAVE
 fi
 
-# Install pixi; PIXI_HOME is already set by env.sh; PIXI_NO_PATH_UPDATE skips rc-file edits.
-if [ ! -x "${PIXI_HOME}/bin/pixi" ]; then
-    PIXI_NO_PATH_UPDATE=1 curl -fsSL https://pixi.sh/install.sh | sh
+# ── stage 1: micromamba + system env ──────────────────────────────────────────
+title "Stage 1: micromamba + system env"
+
+# conda subdir token, derived from the very `uname -sm` facts env.sh exported.
+case "${__OSTYPE}-${__ARCH}" in
+    Linux-x86_64)  CONDA_ARCH="linux-64" ;;
+    Linux-aarch64) CONDA_ARCH="linux-aarch64" ;;
+    Darwin-arm64)  CONDA_ARCH="osx-arm64" ;;
+    Darwin-x86_64) CONDA_ARCH="osx-64" ;;
+    *) echo "Unsupported platform: ${__OSTYPE}-${__ARCH}" >&2; exit 1 ;;
+esac
+
+# Install the micromamba static binary to $__OPT_ROOT/bin — exactly where envoy's
+# own micromamba.py would place it. The upstream installer honours a pre-set
+# BIN_FOLDER (it only prompts when stdin is a tty); INIT_YES / CONDA_FORGE_YES = no
+# keep it side-effect-free (no shell-rc edits, no ~/.mambarc). </dev/null guarantees
+# it never blocks on a prompt.
+MICROMAMBA="${__OPT_ROOT}/bin/micromamba"
+if [ ! -x "${MICROMAMBA}" ]; then
+    mkdir -p "${__OPT_ROOT}/bin"
+    BIN_FOLDER="${__OPT_ROOT}/bin" INIT_YES="no" CONDA_FORGE_YES="no" \
+        bash <(curl -fsSL https://micro.mamba.pm/install.sh) </dev/null
 fi
 
-# ── verify python ────────────────────────────────────────────────────────────
-# Envoy installers require Python ≥ 3.10 (stdlib-only, but uses modern syntax).
-# When invoked via `pixi run bootstrap` the project env supplies the right
-# python3 automatically.  Fail fast here rather than getting a cryptic syntax
-# error deep in an installer.
-if ! python3 - <<'EOF'
-import sys, textwrap
-if sys.version_info < (3, 10):
-    print(textwrap.dedent(f"""\
-        ERROR: python3 {sys.version} is too old (need ≥ 3.10).
-        Run via the pixi project to get the right Python:
-          git clone git@github.com:ickc/provision.git /tmp/provision
-          cd /tmp/provision && pixi run bootstrap          # personal (SSH)
-          cd /tmp/provision && pixi run bootstrap-public   # public (HTTPS)
-        """), file=sys.stderr)
-    sys.exit(1)
-EOF
-then
-    exit 1
+# Create (or update) the conda `system` env at $__OPT_ROOT/system straight from
+# envoy's published spec — no envoy clone needed yet. This is the moment pixi,
+# git, gh, zsh, chezmoi, … come into existence; every later stage assumes them.
+# MAMBA_ROOT_PREFIX (exported by env.sh) is micromamba's package cache.
+_sysyml="$(mktemp)"
+curl -fsSL "https://raw.githubusercontent.com/ickc/envoy/main/conda/system_${CONDA_ARCH}.yml" -o "${_sysyml}"
+if [ -d "${__OPT_ROOT}/system/conda-meta" ]; then
+    "${MICROMAMBA}" env update -y -p "${__OPT_ROOT}/system" -f "${_sysyml}" --prune
+else
+    "${MICROMAMBA}" create -y -p "${__OPT_ROOT}/system" -f "${_sysyml}"
 fi
 
-# ── stage 1: envoy + tools ────────────────────────────────────────────────────
-title "Stage 1: envoy + tools"
+# ── stage 2: envoy + remaining tools ──────────────────────────────────────────
+title "Stage 2: envoy + remaining tools"
 
 # StrictHostKeyChecking=accept-new covers the window before ssh-dir provides known_hosts.
-# Write accepted keys to a throwaway file, NOT ~/.ssh/known_hosts: Stage 2 clones ssh-dir
+# Write accepted keys to a throwaway file, NOT ~/.ssh/known_hosts: Stage 3 clones ssh-dir
 # directly into ~/.ssh, and git refuses to clone into a non-empty directory.
 _known_hosts_tmp="$(mktemp)"
-trap 'rm -f "${_tmpenv}" "${_known_hosts_tmp}"' EXIT
 export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=${_known_hosts_tmp}"
 
 if [ "${PUBLIC}" = "1" ]; then
@@ -153,14 +161,14 @@ fi
 # shellcheck source=/dev/null
 . "${ENVOY_DIR}/env.sh"
 
-envoy_install micromamba
-envoy_install mamba_env --name system --backend micromamba   # provides gh, git, zsh, navi, direnv, starship
-envoy_install code
-envoy_install chezmoi
-envoy_install sman
+# code (VS Code CLI) and sman aren't conda-forge packages, so they stay envoy
+# Python installers. Run them through envoy's pixi env to guarantee Python ≥ 3.10
+# — micromamba, the system env, pixi and chezmoi already exist (Stage 1), so they
+# are no longer installed here. `update` forces a refresh on re-runs.
+( cd "${ENVOY_DIR}" && pixi run python -m bsos.installers update code sman )
 
-# ── stage 2: dotfiles + data repos ────────────────────────────────────────────
-title "Stage 2: dotfiles + data repos"
+# ── stage 3: dotfiles + data repos ────────────────────────────────────────────
+title "Stage 3: dotfiles + data repos"
 
 if [ "${PUBLIC}" = "1" ]; then
     chezmoi init --apply ickc/dotfiles
@@ -176,9 +184,9 @@ else
     fi
 fi
 
-# ── stage 3: machine SSH identity (path 1 only) ───────────────────────────────
+# ── stage 4: machine SSH identity (path 1 only) ───────────────────────────────
 if [ "${PUBLIC}" = "0" ]; then
-    title "Stage 3: machine SSH identity"
+    title "Stage 4: machine SSH identity"
 
     _ssh_key="${HOME}/.ssh/id_ed25519"
     if [ -f "${_ssh_key}" ]; then
@@ -204,6 +212,6 @@ fi
 
 # ── final: generate shell completions ─────────────────────────────────────────
 title "Final: generate shell completions"
-PYTHONPATH="${ENVOY_DIR}/src" python3 -m bsos.shell.completion generate
+( cd "${ENVOY_DIR}" && pixi run generate-completions )
 
 title "Bootstrap complete."

@@ -58,24 +58,33 @@ cd submodule/ssh-dir && make permission
 
 ## Bootstrap Flow (Phase 4)
 
-`bootstrap.sh` is the single entry point — a self-contained bash script (~80 lines).
-It does NOT require this repo to be cloned first; `curl | bash` works on a fresh machine.
+`bootstrap.sh` is the single entry point — a self-contained bash script. Its only
+external dependency is `curl`: it bootstraps from micromamba, so it needs no
+pre-existing Python (of any version). `curl | bash` works on a fresh machine.
+
+The chain is: **micromamba → conda `system` env (pixi, git, gh, zsh, chezmoi, …) → the rest.**
+Because the `system` env brings pixi, the Python-based envoy installers are run via
+`pixi run` inside the envoy clone, which guarantees Python ≥ 3.10 from envoy's pixi env.
 
 Stages:
 
-- **Stage 0**: downloads `env.sh` from envoy (temp) to derive `__OPT_ROOT`/`PIXI_HOME`/etc.;
-  installs pixi via the official `pixi.sh/install.sh` (`PIXI_NO_PATH_UPDATE=1`; respects `PIXI_HOME`).
-- **Stage 1** (all paths): clone envoy → `$XDG_DATA_HOME/envoy`; run `install/micromamba.py`,
-  `mamba_env.py --name system --backend micromamba`, `code.py`, `chezmoi.py`, `sman.py`
-- **Stage 2** (paths 1–2): `chezmoi init --apply ickc/dotfiles`; clone sman-snippets and
+- **Stage 0**: downloads `env.sh` from envoy (temp) to derive `__OSTYPE`/`__ARCH`/`__OPT_ROOT`/etc.
+- **Stage 1** (all paths): install the micromamba static binary to `$__OPT_ROOT/bin` via the
+  official `micro.mamba.pm/install.sh` (pre-set `BIN_FOLDER`, `INIT_YES=no`, `CONDA_FORGE_YES=no`);
+  derive the conda-arch token (`linux-64`, …) from `$__OSTYPE-$__ARCH`; fetch
+  `conda/system_<arch>.yml` from envoy's main branch and `micromamba create`/`env update --prune`
+  the `system` env at `$__OPT_ROOT/system`. This provides pixi, git, gh, zsh, chezmoi, … directly.
+- **Stage 2** (all paths): clone envoy → `$XDG_DATA_HOME/envoy`; install the remaining non-conda
+  tools via `pixi run python -m bsos.installers update code sman` (run in the envoy clone).
+- **Stage 3** (paths 1–2): `chezmoi init --apply ickc/dotfiles`; clone sman-snippets and
   navi-cheatsheets; (path 1 only) clone ssh-dir → `~/.ssh` + `make permission`
-- **Stage 3** (path 1 only, interactive): `ssh-keygen`; `gh auth login`.
+- **Stage 4** (path 1 only, interactive): `ssh-keygen`; `gh auth login`.
   `--no-identity` (implied by `CI=true`) generates the key with an empty passphrase
   and skips `gh auth login`, so the personal path runs unattended for testing.
-- **Final** (all paths): `PYTHONPATH=$ENVOY_DIR/src python3 -m bsos.shell.completion generate`
+- **Final** (all paths): `pixi run generate-completions` (in the envoy clone)
 
 Path 1 (default) uses SSH throughout and assumes SSH agent forwarding is active.
-Path 2 (`--public`) uses HTTPS, skips ssh-dir and Stage 3.
+Path 2 (`--public`) uses HTTPS, skips ssh-dir and Stage 4.
 
 ```bash
 # Full personal bootstrap:
