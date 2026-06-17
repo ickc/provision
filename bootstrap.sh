@@ -84,9 +84,9 @@ title "Stage 0: env setup"
 # Download env.sh temporarily to derive __OSTYPE/__ARCH, __OPT_ROOT,
 # MAMBA_ROOT_PREFIX, XDG_DATA_HOME, etc. (it runs `uname -sm` for platform facts).
 _tmpenv="$(mktemp)"
-_sysyml=""
+_tmpdir="$(mktemp -d)"   # holds the system env spec (needs a .yml name — see Stage 1)
 _known_hosts_tmp=""
-trap 'rm -f "${_tmpenv}" "${_sysyml}" "${_known_hosts_tmp}"' EXIT
+trap 'rm -rf "${_tmpenv}" "${_tmpdir}" "${_known_hosts_tmp}"' EXIT
 curl -fsSL "https://raw.githubusercontent.com/ickc/envoy/main/env.sh" -o "${_tmpenv}"
 # shellcheck source=/dev/null
 . "${_tmpenv}"
@@ -135,7 +135,11 @@ fi
 # envoy's published spec — no envoy clone needed yet. This is the moment pixi,
 # git, gh, zsh, chezmoi, … come into existence; every later stage assumes them.
 # MAMBA_ROOT_PREFIX (exported by env.sh) is micromamba's package cache.
-_sysyml="$(mktemp)"
+#
+# The spec MUST keep its `.yml` name: micromamba picks YAML- vs plain-text-spec
+# parsing by file extension, and a name-less temp file is read line-by-line —
+# turning `- bioconda::potrace` into a bogus channel `- bioconda`.
+_sysyml="${_tmpdir}/system_${CONDA_ARCH}.yml"
 curl -fsSL "https://raw.githubusercontent.com/ickc/envoy/main/conda/system_${CONDA_ARCH}.yml" -o "${_sysyml}"
 if [ -d "${__OPT_ROOT}/system/conda-meta" ]; then
     "${MICROMAMBA}" env update -y -p "${__OPT_ROOT}/system" -f "${_sysyml}" --prune
