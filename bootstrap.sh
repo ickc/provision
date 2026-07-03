@@ -40,6 +40,15 @@ done
 # ── helpers ───────────────────────────────────────────────────────────────────
 title() { echo; echo "════════════════════════════════════════"; echo "  $*"; }
 
+# sha256 of a file, portable across Linux (coreutils) and macOS (perl shasum).
+sha256_of() {
+    if command -v sha256sum > /dev/null 2>&1; then
+        sha256sum "${1}" | cut -d' ' -f1
+    else
+        shasum -a 256 "${1}" | cut -d' ' -f1
+    fi
+}
+
 # Hard-sync a repo to its remote default branch: fetch, then force the working
 # tree onto origin's default branch (e.g. main). This intentionally:
 #   • follows a renamed default branch — clones stuck on master move to main;
@@ -84,7 +93,7 @@ title "Stage 0: env setup"
 # Download env.sh temporarily to derive __OSTYPE/__ARCH, __OPT_ROOT,
 # MAMBA_ROOT_PREFIX, XDG_DATA_HOME, etc. (it runs `uname -sm` for platform facts).
 _tmpenv="$(mktemp)"
-_tmpdir="$(mktemp -d)"   # holds the system env spec (needs a .yml name — see Stage 1)
+_tmpdir="$(mktemp -d)"   # holds the system env spec (needs a `-lock.yml`/`.yml` name — see Stage 1)
 _known_hosts_tmp=""
 trap 'rm -rf "${_tmpenv}" "${_tmpdir}" "${_known_hosts_tmp}"' EXIT
 curl -fsSL "https://raw.githubusercontent.com/ickc/envoy/main/env.sh" -o "${_tmpenv}"
@@ -136,15 +145,40 @@ fi
 # git, gh, zsh, chezmoi, … come into existence; every later stage assumes them.
 # MAMBA_ROOT_PREFIX (exported by env.sh) is micromamba's package cache.
 #
-# The spec MUST keep its `.yml` name: micromamba picks YAML- vs plain-text-spec
-# parsing by file extension, and a name-less temp file is read line-by-line —
-# turning `- bioconda::potrace` into a bogus channel `- bioconda`.
-_sysyml="${_tmpdir}/system_${CONDA_ARCH}.yml"
-curl -fsSL "https://raw.githubusercontent.com/ickc/envoy/main/conda/system_${CONDA_ARCH}.yml" -o "${_sysyml}"
-if [ -d "${__OPT_ROOT}/system/conda-meta" ]; then
-    "${MICROMAMBA}" env update -y -p "${__OPT_ROOT}/system" -f "${_sysyml}" --prune
+# Preferred spec: envoy's version-pinned multi-platform conda-lock file. The
+# local copy MUST keep the `-lock.yml` suffix — that suffix (not content
+# sniffing) is how micromamba recognizes a conda-lock file; misnamed, it would
+# silently create an EMPTY env. `env update` cannot consume conda-lock files,
+# so an out-of-date env is removed and recreated instead — the lock pins every
+# package, so recreation converges exactly, and the files are re-hardlinked
+# from the package cache rather than rewritten. The sha256 stamp (same file
+# envoy's mamba_env.py writes) makes an unchanged lockfile a no-op, so
+# re-running the bootstrap does not touch the env at all.
+_syslock="${_tmpdir}/system-lock.yml"
+_sysstamp="${__OPT_ROOT}/system/conda-meta/.bsos-lock-sha256"
+if curl -fsSL "https://raw.githubusercontent.com/ickc/envoy/main/conda/system-lock.yml" -o "${_syslock}"; then
+    _lockhash="$(sha256_of "${_syslock}")"
+    if [ -f "${_sysstamp}" ] && [ "$(cat "${_sysstamp}")" = "${_lockhash}" ]; then
+        echo "system env already matches system-lock.yml; skipping"
+    else
+        rm -rf "${__OPT_ROOT}/system"
+        "${MICROMAMBA}" create -y -p "${__OPT_ROOT}/system" -f "${_syslock}"
+        printf '%s\n' "${_lockhash}" > "${_sysstamp}"
+    fi
 else
-    "${MICROMAMBA}" create -y -p "${__OPT_ROOT}/system" -f "${_sysyml}"
+    # Fallback for the window until envoy publishes system-lock.yml on main:
+    # the unpinned per-arch YAML. The spec MUST keep its `.yml` name —
+    # micromamba picks YAML- vs plain-text-spec parsing by file extension, and
+    # a name-less temp file is read line-by-line, turning `- bioconda::potrace`
+    # into a bogus channel `- bioconda`. Remove this branch once the lockfile
+    # is live.
+    _sysyml="${_tmpdir}/system_${CONDA_ARCH}.yml"
+    curl -fsSL "https://raw.githubusercontent.com/ickc/envoy/main/conda/system_${CONDA_ARCH}.yml" -o "${_sysyml}"
+    if [ -d "${__OPT_ROOT}/system/conda-meta" ]; then
+        "${MICROMAMBA}" env update -y -p "${__OPT_ROOT}/system" -f "${_sysyml}" --prune
+    else
+        "${MICROMAMBA}" create -y -p "${__OPT_ROOT}/system" -f "${_sysyml}"
+    fi
 fi
 
 # ── stage 2: envoy + remaining tools ──────────────────────────────────────────
