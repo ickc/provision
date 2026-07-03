@@ -71,9 +71,12 @@ Stages:
 - **Stage 0**: downloads `env.sh` from envoy (temp) to derive `__OSTYPE`/`__ARCH`/`__OPT_ROOT`/etc.
 - **Stage 1** (all paths): install the micromamba static binary to `$__OPT_ROOT/bin` via the
   official `micro.mamba.pm/install.sh` (pre-set `BIN_FOLDER`, `INIT_YES=no`, `CONDA_FORGE_YES=no`);
-  derive the conda-arch token (`linux-64`, …) from `$__OSTYPE-$__ARCH`; fetch
-  `conda/system_<arch>.yml` from envoy's main branch and `micromamba create`/`env update --prune`
-  the `system` env at `$__OPT_ROOT/system`. This provides pixi, git, gh, zsh, chezmoi, … directly.
+  fetch the version-pinned multi-platform `conda/system-lock.yml` from envoy's main branch and
+  `micromamba create` the `system` env at `$__OPT_ROOT/system` (an existing env is skipped when
+  the lockfile's sha256 matches the stamp in `conda-meta/`, or removed and recreated otherwise —
+  `env update` cannot consume conda-lock files). Falls back to the legacy per-arch
+  `conda/system_<arch>.yml` + `create`/`env update --prune` while the lockfile is not yet
+  published. This provides pixi, git, gh, zsh, chezmoi, … directly.
 - **Stage 2** (all paths): clone envoy → `$XDG_DATA_HOME/envoy`; install the remaining non-conda
   tools via `pixi run python -m bsos.installers update code sman` (run in the envoy clone).
 - **Stage 3** (paths 1–2): `chezmoi init --apply ickc/dotfiles`; clone sman-snippets and
