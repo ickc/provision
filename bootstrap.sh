@@ -93,7 +93,7 @@ title "Stage 0: env setup"
 # Download env.sh temporarily to derive __OSTYPE/__ARCH, __OPT_ROOT,
 # MAMBA_ROOT_PREFIX, XDG_DATA_HOME, etc. (it runs `uname -sm` for platform facts).
 _tmpenv="$(mktemp)"
-_tmpdir="$(mktemp -d)"   # holds the system env spec (needs a `-lock.yml`/`.yml` name — see Stage 1)
+_tmpdir="$(mktemp -d)"   # holds the system env lockfile (needs a `-lock.yml` name — see Stage 1)
 _known_hosts_tmp=""
 trap 'rm -rf "${_tmpenv}" "${_tmpdir}" "${_known_hosts_tmp}"' EXIT
 curl -fsSL "https://raw.githubusercontent.com/ickc/envoy/main/env.sh" -o "${_tmpenv}"
@@ -119,12 +119,12 @@ fi
 # ── stage 1: micromamba + system env ──────────────────────────────────────────
 title "Stage 1: micromamba + system env"
 
-# conda subdir token, derived from the very `uname -sm` facts env.sh exported.
+# Guard on the platforms system-lock.yml is solved for (linux-64, linux-aarch64,
+# osx-64, osx-arm64), keyed on the very `uname -sm` facts env.sh exported. Anywhere
+# else micromamba would find no packages for the subdir and create an EMPTY env
+# rather than fail, so refuse up front.
 case "${__OSTYPE}-${__ARCH}" in
-    Linux-x86_64)  CONDA_ARCH="linux-64" ;;
-    Linux-aarch64) CONDA_ARCH="linux-aarch64" ;;
-    Darwin-arm64)  CONDA_ARCH="osx-arm64" ;;
-    Darwin-x86_64) CONDA_ARCH="osx-64" ;;
+    Linux-x86_64 | Linux-aarch64 | Darwin-arm64 | Darwin-x86_64) ;;
     *) echo "Unsupported platform: ${__OSTYPE}-${__ARCH}" >&2; exit 1 ;;
 esac
 
@@ -140,45 +140,31 @@ if [ ! -x "${MICROMAMBA}" ]; then
         bash <(curl -fsSL https://micro.mamba.pm/install.sh) </dev/null
 fi
 
-# Create (or update) the conda `system` env at $__OPT_ROOT/system straight from
-# envoy's published spec — no envoy clone needed yet. This is the moment pixi,
+# Create the conda `system` env at $__OPT_ROOT/system straight from envoy's
+# published lockfile — no envoy clone needed yet. This is the moment pixi,
 # git, gh, zsh, chezmoi, … come into existence; every later stage assumes them.
 # MAMBA_ROOT_PREFIX (exported by env.sh) is micromamba's package cache.
 #
-# Preferred spec: envoy's version-pinned multi-platform conda-lock file. The
-# local copy MUST keep the `-lock.yml` suffix — that suffix (not content
-# sniffing) is how micromamba recognizes a conda-lock file; misnamed, it would
-# silently create an EMPTY env. `env update` cannot consume conda-lock files,
-# so an out-of-date env is removed and recreated instead — the lock pins every
-# package, so recreation converges exactly, and the files are re-hardlinked
-# from the package cache rather than rewritten. The sha256 stamp (same file
-# envoy's mamba_env.py writes) makes an unchanged lockfile a no-op, so
-# re-running the bootstrap does not touch the env at all.
+# The spec is envoy's version-pinned multi-platform conda-lock file. The local
+# copy MUST keep the `-lock.yml` suffix — that suffix (not content sniffing) is
+# how micromamba recognizes a conda-lock file; misnamed, it would silently
+# create an EMPTY env. `env update` cannot consume conda-lock files (libmamba
+# fails re-solving exact-pin specs), so an out-of-date env is removed and
+# recreated instead — the lock pins every package, so recreation converges
+# exactly, and the files are re-hardlinked from the package cache rather than
+# rewritten. The sha256 stamp is the same file envoy's mamba_env.py writes and
+# reads, so an unchanged lockfile is a no-op here *and* in a later
+# `mamba_env update`: re-running the bootstrap does not touch the env at all.
 _syslock="${_tmpdir}/system-lock.yml"
 _sysstamp="${__OPT_ROOT}/system/conda-meta/.bsos-lock-sha256"
-if curl -fsSL "https://raw.githubusercontent.com/ickc/envoy/main/conda/system-lock.yml" -o "${_syslock}"; then
-    _lockhash="$(sha256_of "${_syslock}")"
-    if [ -f "${_sysstamp}" ] && [ "$(cat "${_sysstamp}")" = "${_lockhash}" ]; then
-        echo "system env already matches system-lock.yml; skipping"
-    else
-        rm -rf "${__OPT_ROOT}/system"
-        "${MICROMAMBA}" create -y -p "${__OPT_ROOT}/system" -f "${_syslock}"
-        printf '%s\n' "${_lockhash}" > "${_sysstamp}"
-    fi
+curl -fsSL "https://raw.githubusercontent.com/ickc/envoy/main/conda/system-lock.yml" -o "${_syslock}"
+_lockhash="$(sha256_of "${_syslock}")"
+if [ -f "${_sysstamp}" ] && [ "$(cat "${_sysstamp}")" = "${_lockhash}" ]; then
+    echo "system env already matches system-lock.yml; skipping"
 else
-    # Fallback for the window until envoy publishes system-lock.yml on main:
-    # the unpinned per-arch YAML. The spec MUST keep its `.yml` name —
-    # micromamba picks YAML- vs plain-text-spec parsing by file extension, and
-    # a name-less temp file is read line-by-line, turning `- bioconda::potrace`
-    # into a bogus channel `- bioconda`. Remove this branch once the lockfile
-    # is live.
-    _sysyml="${_tmpdir}/system_${CONDA_ARCH}.yml"
-    curl -fsSL "https://raw.githubusercontent.com/ickc/envoy/main/conda/system_${CONDA_ARCH}.yml" -o "${_sysyml}"
-    if [ -d "${__OPT_ROOT}/system/conda-meta" ]; then
-        "${MICROMAMBA}" env update -y -p "${__OPT_ROOT}/system" -f "${_sysyml}" --prune
-    else
-        "${MICROMAMBA}" create -y -p "${__OPT_ROOT}/system" -f "${_sysyml}"
-    fi
+    rm -rf "${__OPT_ROOT}/system"
+    "${MICROMAMBA}" env create -y -p "${__OPT_ROOT}/system" -f "${_syslock}"
+    printf '%s\n' "${_lockhash}" > "${_sysstamp}"
 fi
 
 # ── stage 2: envoy + remaining tools ──────────────────────────────────────────
