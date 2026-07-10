@@ -51,11 +51,16 @@ nonempty_dir() { [ -d "${1}" ] && [ -n "$(ls -A "${1}" 2>/dev/null)" ]; }
 envoy_test() { python3 "${ENVOY_DIR}/install/${1}.py" test; }
 
 # sha256 of a file, portable across Linux (coreutils) and macOS (perl shasum).
+# Returns non-zero when neither exists, so stamp_matches_lock reports a failed
+# check rather than silently comparing against empty output.
 sha256_of() {
     if command -v sha256sum > /dev/null 2>&1; then
         sha256sum "${1}" | cut -d' ' -f1
-    else
+    elif command -v shasum > /dev/null 2>&1; then
         shasum -a 256 "${1}" | cut -d' ' -f1
+    else
+        echo "Need sha256sum (coreutils) or shasum (perl)." >&2
+        return 1
     fi
 }
 

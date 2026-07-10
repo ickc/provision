@@ -44,8 +44,11 @@ title() { echo; echo "═══════════════════�
 sha256_of() {
     if command -v sha256sum > /dev/null 2>&1; then
         sha256sum "${1}" | cut -d' ' -f1
-    else
+    elif command -v shasum > /dev/null 2>&1; then
         shasum -a 256 "${1}" | cut -d' ' -f1
+    else
+        echo "Need sha256sum (coreutils) or shasum (perl) to verify the system env lockfile." >&2
+        return 1
     fi
 }
 
