@@ -50,6 +50,26 @@ is_mode() { [ "$(_mode "${1}")" = "${2}" ]; }
 nonempty_dir() { [ -d "${1}" ] && [ -n "$(ls -A "${1}" 2>/dev/null)" ]; }
 envoy_test() { python3 "${ENVOY_DIR}/install/${1}.py" test; }
 
+# sha256 of a file, portable across Linux (coreutils) and macOS (perl shasum).
+sha256_of() {
+    if command -v sha256sum > /dev/null 2>&1; then
+        sha256sum "${1}" | cut -d' ' -f1
+    else
+        shasum -a 256 "${1}" | cut -d' ' -f1
+    fi
+}
+
+# The `system` env carries a sha256 stamp of the conda-lock file it was created
+# from. It is the contract between bootstrap.sh (which writes it) and envoy's
+# mamba_env.py (which reads it): equal hashes mean a later `mamba_env update`
+# leaves the env alone instead of removing and recreating it. A missing or stale
+# stamp still yields a working env, so nothing else here would catch the drift.
+stamp_matches_lock() {
+    local stamp="${__OPT_ROOT}/system/conda-meta/.bsos-lock-sha256"
+    local lock="${ENVOY_DIR}/conda/system-lock.yml"
+    [ -f "${stamp}" ] && [ -f "${lock}" ] && [ "$(cat "${stamp}")" = "$(sha256_of "${lock}")" ]
+}
+
 echo "== core toolchain =="
 check "pixi functional"  pixi --version
 check "micromamba functional" "${__OPT_ROOT}/bin/micromamba" --version
@@ -70,6 +90,7 @@ for _t in git gh task zsh navi starship direnv chezmoi pixi; do
 done
 check "git --version"  "${SYSTEM_BIN}/git" --version
 check "task --version" "${SYSTEM_BIN}/task" --version
+check "env stamped from envoy's system-lock.yml" stamp_matches_lock
 
 echo "== dotfiles (chezmoi) =="
 check "config dir exists"           test -d "${HOME}/.config"
