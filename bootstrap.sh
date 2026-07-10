@@ -131,6 +131,16 @@ case "${__OSTYPE}-${__ARCH}" in
     *) echo "Unsupported platform: ${__OSTYPE}-${__ARCH}" >&2; exit 1 ;;
 esac
 
+# Below, a stale `system` env is `rm -rf`'d before being recreated — the only
+# destructive step in the bootstrap. env.sh honours a pre-set __OPT_ROOT, so a
+# stray value ("" or "/") would aim that at /system. Refuse anything that isn't
+# an absolute path below the root.
+case "${__OPT_ROOT:-}" in
+    /) echo "Refusing __OPT_ROOT=/ — it must be a directory below the root." >&2; exit 1 ;;
+    /?*) ;;
+    *) echo "Refusing non-absolute __OPT_ROOT='${__OPT_ROOT:-}'." >&2; exit 1 ;;
+esac
+
 # Install the micromamba static binary to $__OPT_ROOT/bin — exactly where envoy's
 # own micromamba.py would place it. The upstream installer honours a pre-set
 # BIN_FOLDER (it only prompts when stdin is a tty); INIT_YES / CONDA_FORGE_YES = no
